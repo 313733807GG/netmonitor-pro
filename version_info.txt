@@ -1,0 +1,26 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(19, 0, 0, 0),
+    prodvers=(19, 0, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '080404b0',
+         [StringStruct('CompanyName', 'NetMonitor Project'),
+         StringStruct('FileDescription', 'NetMonitor Pro 19 AI节点定向探测'),
+         StringStruct('FileVersion', '19.0.0.0'),
+         StringStruct('InternalName', 'NetMonitor'),
+         StringStruct('OriginalFilename', 'NetMonitor.exe'),
+         StringStruct('ProductName', 'NetMonitor Pro'),
+         StringStruct('ProductVersion', '19.0.0.0')])
+    ]),
+    VarFileInfo([VarStruct('Translation', [2052, 1200])])
+  ]
+)
