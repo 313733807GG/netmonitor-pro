@@ -12,6 +12,7 @@ from app import (
     YELLOW,
     DataEngine,
     choose_primary_route,
+    choose_display_proxy,
     connection_class,
     connection_color,
     effective_proxy_takeover,
@@ -87,9 +88,76 @@ class ProxySelectionTests(unittest.TestCase):
             "节点列表": {"type": "Selector", "now": "日本A"},
             "国外网站": {"type": "Selector", "now": "台湾A"},
         }).ai_selection())
-        self.assertIsNone(self.pipe_with({
+        self.assertEqual(self.pipe_with({
             "AI服务": {"type": "Selector", "now": "DIRECT"},
+        }).ai_selection(), ("AI服务", "", "Selector"))
+
+    def test_provider_only_subscription_uses_unique_selector(self):
+        pipe = self.pipe_with({
+            "GLOBAL": {"type": "Selector", "now": "DIRECT"},
+            "闪现": {"type": "Selector", "now": "自动选择"},
+            "自动选择": {"type": "URLTest", "now": "日本A"},
+            "故障转移": {"type": "Fallback", "now": "台湾A"},
+            "日本A": {"type": "Shadowsocks"},
+        })
+        self.assertEqual(pipe.ai_selection(), ("闪现", "日本A", "Selector"))
+
+    def test_service_aliases_are_recognized(self):
+        for name in ("🤖 ChatGPT", "OpenAI", "Claude", "人工智能"):
+            with self.subTest(name=name):
+                self.assertEqual(self.pipe_with({
+                    name: {"type": "Selector", "now": "日本A"},
+                    "国外网站": {"type": "Selector", "now": "台湾A"},
+                }).ai_selection(), (name, "日本A", "Selector"))
+
+    def test_does_not_guess_between_provider_selectors_or_specialized_group(self):
+        self.assertIsNone(self.pipe_with({
+            "机场A": {"type": "Selector", "now": "日本A"},
+            "机场B": {"type": "Selector", "now": "台湾A"},
         }).ai_selection())
+        self.assertIsNone(self.pipe_with({
+            "国外网站": {"type": "Selector", "now": "台湾A"},
+        }).ai_selection())
+
+    def test_explicit_ai_direct_does_not_fall_back_to_provider_or_other_ai(self):
+        self.assertEqual(self.pipe_with({
+            "AI服务": {"type": "Selector", "now": "DIRECT"},
+            "ChatGPT": {"type": "Selector", "now": "日本A"},
+            "闪现": {"type": "Selector", "now": "日本A"},
+        }).ai_selection(), ("AI服务", "", "Selector"))
+
+    def test_cycle_and_load_balance_have_no_single_probe_leaf(self):
+        for proxies in ({
+            "AI服务": {"type": "Selector", "now": "循环"},
+            "循环": {"type": "Selector", "now": "AI服务"},
+        }, {
+            "AI服务": {"type": "Selector", "now": "均衡"},
+            "均衡": {"type": "LoadBalance", "now": "日本A"},
+        }):
+            self.assertEqual(self.pipe_with(proxies).ai_selection(),
+                             ("AI服务", "", "Selector"))
+
+    def test_proxy_display_stays_stable_and_expires_with_last_connection(self):
+        old = ("闪现", "日本A")
+        stats = {old: [0, 1], ("闪现", "台湾A"): [1000000, 3],
+                 ("局域网", "DIRECT"): [9000000, 8]}
+        self.assertEqual(choose_display_proxy(stats, old), old)
+        del stats[old]
+        self.assertEqual(choose_display_proxy(stats, old), ("闪现", "台湾A"))
+        self.assertEqual(choose_display_proxy({}, old), ("", ""))
+
+    def test_multiple_real_exits_and_idle_selection_are_explicit(self):
+        label, _ = format_node_status({
+            "mode": "rule", "active_group": "闪现", "active_node": "日本A",
+            "proxy_routes": [("闪现", "日本A", 1), ("AI", "台湾A", 2)],
+        })
+        self.assertIn("另1个出口", label)
+        label, _ = format_node_status({
+            "mode": "rule", "sel_group": "闪现", "sel_node": "日本A",
+            "active_route_exit": "DIRECT",
+        })
+        self.assertIn("待连接", label)
+        self.assertNotIn("DIRECT", label)
 
     def test_live_bytes_outrank_idle_connection_count(self):
         stats = {
@@ -115,7 +183,7 @@ class ProxySelectionTests(unittest.TestCase):
             "active_group": "闪现",
             "active_node": "日本B",
         })
-        self.assertEqual(label, "当前流量: 闪现 → 日本B")
+        self.assertEqual(label, "代理节点: 闪现 → 日本B")
         self.assertEqual(node, "日本B")
 
     def test_global_label_uses_global_chain(self):
@@ -148,7 +216,7 @@ class ProxySelectionTests(unittest.TestCase):
             "mode": "global", "global_now": "REJECT-DROP",
         }), "")
 
-    def test_rule_label_reports_the_dominant_actual_route(self):
+    def test_rule_label_ignores_dominant_direct_traffic(self):
         label, node = format_node_status({
             "mode": "rule",
             "active_route_group": "局域网",
@@ -156,8 +224,8 @@ class ProxySelectionTests(unittest.TestCase):
             "active_group": "节点选择",
             "active_node": "日本B",
         })
-        self.assertEqual(label, "当前流量: 局域网 → DIRECT（直连）")
-        self.assertEqual(node, "DIRECT")
+        self.assertEqual(label, "代理节点: 节点选择 → 日本B")
+        self.assertEqual(node, "日本B")
 
     def test_top_proxy_labels_show_directional_rates(self):
         self.assertEqual(

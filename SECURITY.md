@@ -1,11 +1,7 @@
-# Security Policy
+# 安全问题反馈
 
-## Supported versions
+当前仅维护v21.0.8和主分支后续修复。EXE未做发布者代码签名，请核对Release校验值并保留系统保护。
 
-目前仅维护主分支上的 NetMonitor Pro 19 及之后版本。
+日志可能含程序路径、域名、IP和节点名，请不要在公开Issue中提交原始账本、订阅、控制器密钥或可利用细节。若仓库提供Security → Report a vulnerability，使用私密报告；否则先创建不含敏感细节的问题以联系维护者。
 
-## Reporting a vulnerability
-
-请不要在公开 Issue 中披露订阅链接、控制接口 Token、IP 地址、流量账本或可利用细节。
-
-若仓库已启用 GitHub 私密漏洞报告，请优先通过仓库的 **Security → Report a vulnerability** 提交；否则请先创建不含敏感细节的 Issue，维护者会协商安全沟通方式。
+专用检测入口只能绑定127.0.0.1，默认REJECT。隐藏组不等于访问控制，同机进程仍可能连接该端口。程序读取本地控制接口，检测时仅修改专用选择组；请勿把控制API开放到公网。

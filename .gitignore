@@ -1,55 +1,26 @@
-# Python bytecode and tooling
 __pycache__/
 *.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-coverage.xml
-htmlcov/
-
-# Virtual environments and local Python state
 .venv/
-venv/
-env/
-ENV/
-.python-version
-
-# PyInstaller build output
+.runtime/
 build/
 dist/
-*.manifest
-*.spec.bak
-
-# NetMonitor local data and exports
-*.sqlite3
-*.sqlite3-*
+*.bak
+*.zip
+*.exe
+*.sqlite3*
+*.db
+logs/
 traffic-history/
-traffic_history/
-traffic_*.csv
-anomaly_*.csv
 exports/
-
-# Secrets and local proxy configuration
-.env
-.env.*
-!.env.example
+selftest*.json
+unknown-targets*.json
+.env*
 *.pem
 *.key
 *.pfx
 *.p12
-config.local.*
-
-# Release artifacts
-*.zip
-*.exe
-
-# IDE and operating-system files
 .vscode/
 .idea/
-*.code-workspace
 Thumbs.db
-ehthumbs.db
 Desktop.ini
 .DS_Store

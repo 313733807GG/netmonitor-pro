@@ -1,30 +1,7 @@
-# Contributing to NetMonitor Pro
+# 参与维护
 
-感谢参与改进项目。
+先阅读 README 和 docs/USAGE.md，使用 Windows Python 3.12 环境，通过 tools/project_cli.py check/test 验证。业务源码位于 src，测试位于 tests。源码/构建、安装位置、用户数据相互独立，build 不部署。
 
-## 提交前检查
+归属标注需附可靠来源和进程/域名证据；避免把共享CDN、动态IP或随机域直接归到一个品牌。涉及控制接口、出站选择、计费口径和日志迁移时说明验证范围。明确区分Clash Verge实测与其他内核推测兼容。
 
-1. 不要提交代理订阅、节点、控制器 Token、IP 地址、个人流量账本、导出 CSV 或构建产物。
-2. 保持 Python 代码兼容 Windows 10/11 与 Python 3.12。
-3. 执行测试：
-
-   ```powershell
-   python -m unittest discover -s tests -v
-   ```
-
-4. 为新逻辑补充或更新测试，特别是路由、节点归属、颜色状态和历史账本逻辑。
-5. 在 Pull Request 中说明问题、改动范围、验证方式以及可能影响的代理内核版本。
-
-## 提交信息
-
-建议使用简短、可读的提交标题，例如：
-
-```text
-fix: prevent AI probe from falling back to foreign-site group
-feat: export billed traffic by hour
-docs: clarify administrator startup behavior
-```
-
-## 讨论范围
-
-项目只读取本机可用的 Windows 网络事件与 Mihomo/Clash 控制接口；不包含、收集或分发代理订阅与节点配置。请勿在公开 Issue 中粘贴敏感配置。
+不要提交订阅、密钥、代理配置、个人节点、流量账本、原始日志、自检报告、缓存或构建产物。提Issue前脱敏，提交PR时说明问题、结果、测试和兼容限制。

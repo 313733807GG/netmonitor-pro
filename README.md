@@ -1,83 +1,66 @@
-# NetMonitor Pro
+# NetMonitor Pro 21.0.8
 
-Windows 桌面流量监控工具：以 Windows ETW 获取精准进程上下行，以 Clash/Mihomo 控制接口补充真实分流出口、策略组与节点信息。
+Windows 桌面网络监控小组件：系统/进程实时流量、Mihomo 连接分流、AI 出口节点、HTTP 延迟与 IP 质量。
 
-> 适用于 Windows 10 / 11 x64。该项目不包含代理订阅、节点、控制器密钥或个人流量记录。
+> **本版本仅针对 Clash Verge Rev 做过适配与实机验证。其他 Mihomo 内核客户端可能适用，但需要自行适配控制接口和检测入口；非 Mihomo 内核不建议下载使用。** 本项目不是 Clash Verge 官方产品，不附带代理服务、订阅或节点。
 
-## 功能
+[下载 v21.0.8](https://github.com/313733807GG/netmonitor-pro/releases/tag/v21.0.8) · [使用与维护](docs/USAGE.md) · [交给 AI 安装](docs/AI_INSTALL.md) · [IP 检测入口](docs/CLASH_VERGE_SETUP.md) · [更新记录](CHANGELOG.md)
 
-- 无需 Npcap、WinDivert 等第三方抓包驱动；管理员模式使用 Windows 自带 ETW 采集 TCP、UDP、QUIC 进程流量。
-- 显示系统总流量、进程实时上下行、活跃连接、规则、策略组和实际出口节点。
-- 统一配色：系统连接蓝、直连绿、代理黄、拦截红。
-- 基于 Mihomo 连接 API 持久记录 PID、程序、域名、规则、节点、实际字节和倍率计费估算，并提供超量事件与 CSV 导出。
-- AI 节点探测、体检和延迟测试固定使用 `AI服务` 策略组当前选择的叶子节点，不会误用“国外网站”或最近活跃节点。
-- 主窗口和横/竖吸附条共用同一个 AI 节点状态灯。
+## 界面
 
-## 快速开始
+<img src="docs/images/netmonitor-21.0.8.png" width="360" alt="NetMonitor Pro 21.0.8 桌面面板：流量、Clash Verge 状态、IP 质量、地区与连接列表">
 
-### 环境
+展示图由维护者提供。节点、地区、分数和软件名称为当时示例，不是默认配置、代理推荐或可保证的检测结果。
 
-- Windows 10 / 11 x64
-- Python 3.12（当前测试环境）
-- 可选：Clash Verge Rev、Mihomo 或兼容控制接口的代理内核
+## 下载运行
+
+1. 下载 Release 中的 **NetMonitor-v21.0.8-windows-x64.zip**，核对同页 `SHA256SUMS.txt`；GitHub 自动生成的 Source code 是源码，不含可运行 EXE。
+2. 完整解压到有写入权限的独立目录，保留 `NetMonitor.exe` 和整个 `_internal`，不要只复制 EXE。便携包无需另装 Python。
+3. 启动 Clash Verge Rev，再启动 `NetMonitor.exe`，按 Windows 提示允许管理员权限，以启用 ETW 精准采集。普通权限下功能可能降级。
+4. 如需 IPPure/CleanIP 评分，先按[检测入口说明](docs/CLASH_VERGE_SETUP.md)合并专用配置；缺少此入口时评分不可用，普通流量监控仍可使用。
+
+已在 Windows x64、Python 3.12.10 构建环境、Clash Verge Rev 2.5.x / Mihomo v1.19.32 验证；没有对所有 Windows 版本、其他客户端或架构作兼容保证。运行系统需能加载随包 Python/Qt 运行库。
+
+**EXE 未做发布者代码签名**，Windows 智能应用控制可能阻止 EXE 或依赖 DLL。哈希校验不等于代码签名。请保留系统安全保护，遇到拦截按[使用说明](docs/USAGE.md)排查；不要反复重新打包或关闭保护来碰运气。
+
+## 主要功能
+
+- 系统网卡与 ETW 进程流量，覆盖 TCP、UDP/QUIC；代理分流/系统连接视图，连接悬停取证、点击固定列表、吸附迷你条。
+- 显示系统代理、TUN、严格路由、规则/全局/直连模式；无法取得可信状态时显示未知。
+- 识别 AI 实际出口，规则模式优先 ChatGPT/OpenAI，其次 Claude/Gemini；全局模式使用 GLOBAL 叶子节点。多出口场景只展示选定的 AI 出口。
+- IPPure 系数、CleanIP 纯净度/等级、风险分、风险标记、IP 类型和地区；每次启动按“订阅标识 + 节点名”缓存，手动“IP质量”可刷新。
+- “探测周期”和“测AI延迟”测量节点访问 ChatGPT 测试地址的 HTTP 耗时，独立于 IP 质量缓存；不代表 ICMP 延迟或完整 AI 服务可用性。
+- 原流量账本与待鉴定目标保存在本机，域名/其他名称、裸 IP、乱码异常分别保留配额。
+
+## 需要自行维护的内容
+
+**未知名称不会自动在线鉴定或自动更新别名库。** `src/connection_labels.py` 是本地静态识别库；进程名、父进程和域名只是归属线索，不保证所有连接都能识别，也不能仅凭随机域名/动态 IP 判断应用或安全性。待鉴定日志需使用者定期审阅、核实归属并更新源码/重新构建；详见[维护流程](docs/USAGE.md#未知名称维护)。
+
+检测网站是独立第三方服务，可能限流、要求人机验证、改接口或停止服务；评分、类型和地理库会有差异，不能当作账号风控保证。软件不绕过验证，不因接口失败伪造评分。动态出口变化但节点名未变时，缓存需手动刷新。
+
+日志、流量账本、导出文件可能含域名、IP、程序路径和节点名；**不要原样上传到公开 Issue 或交给在线 AI**。仓库和便携包不包含维护者的日志、账本、订阅、密钥或个人代理脚本。
+
+## 从源码运行与构建
+
+使用 Windows x64、受信任的独立 Python 3.12，创建自己的虚拟环境：
 
 ```powershell
-git clone https://github.com/313733807GG/netmonitor-pro.git
-cd netmonitor-pro
 py -3.12 -m venv .venv
-.\.venv\Scripts\python -m pip install --upgrade pip
-.\.venv\Scripts\python -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -I tools/project_cli.py check
+.\.venv\Scripts\python.exe -I tools/project_cli.py test
+.\.venv\Scripts\python.exe -I tools/project_cli.py run
 ```
 
-### 运行
+构建另装 `requirements-build.txt`，执行：
 
 ```powershell
-.\.venv\Scripts\python app.py
+.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+.\.venv\Scripts\python.exe -I tools/project_cli.py build
 ```
 
-程序默认会请求管理员权限，以启用 ETW 精准进程流量。若仅需排障或普通权限连接视图：
+输出 `dist/NetMonitor`，构建不自动安装或重启程序。源码版与 EXE 不要同时采集同一个 ETW 会话。当前 137 项回归测试；GitHub Actions 在 Windows 上运行。`src/etw` 随附 pywintrace 0.3.0 源码，**不要安装 PyPI 上同名的 `etw` 包**。
 
-```powershell
-.\.venv\Scripts\python app.py --normal-mode
-```
+## 许可
 
-### 测试
-
-```powershell
-.\.venv\Scripts\python -m unittest discover -s tests -v
-```
-
-### 构建 Windows 发布包
-
-```powershell
-.\.venv\Scripts\python -m PyInstaller --noconfirm --clean NetMonitor.spec
-```
-
-构建产物位于 `dist/NetMonitor/`；请通过 GitHub Releases 分发发行包，不要把生成的 EXE、DLL 或 ZIP 提交到源码分支。
-
-## 项目结构
-
-```text
-app.py                 主界面、采样协调、管理员启动与节点状态逻辑
-pipe_client.py         Clash/Mihomo 命名管道和控制接口客户端
-traffic_capture.py     Windows ETW 进程网络字节采集
-traffic_history.py     SQLite 流量账本、倍率估算与 CSV 导出
-etw/                   随项目分发的 pywintrace 兼容层
-tests/                 单元测试
-THIRD_PARTY_LICENSES/  第三方许可证文本
-NetMonitor.spec        PyInstaller 构建配置
-```
-
-## 使用与隐私
-
-- 常规使用说明见 [使用说明.txt](使用说明.txt)，v19 AI 节点改动见 [优化说明_v19.md](优化说明_v19.md)。
-- 本地账本默认位于 `%LOCALAPPDATA%\NetMonitorPro\traffic-history\traffic_history.sqlite3`，不随 Git 仓库提交。
-- 提交 Issue、日志、截图或配置前，请删除订阅链接、节点名称、控制器 Token、IP 地址及可识别的流量记录。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request。提交前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，并确保测试通过。
-
-## 许可证
-
-本项目使用 [MIT License](LICENSE)。`etw/` 的兼容层对应第三方许可证见 [THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES)。
+项目自有源码为 [MIT](LICENSE)。pywintrace、Python、Qt/PySide6 等保留各自许可，见 [第三方说明](THIRD_PARTY_NOTICES.md) 与 `THIRD_PARTY_LICENSES/`；MIT 不覆盖第三方组件。
