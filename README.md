@@ -4,7 +4,7 @@ Windows 桌面网络监控小组件：系统/进程实时流量、Mihomo 连接�
 
 > **本版本仅针对 Clash Verge Rev 做过适配与实机验证。其他 Mihomo 内核客户端可能适用，但需要自行适配控制接口和检测入口；非 Mihomo 内核不建议下载使用。** 本项目不是 Clash Verge 官方产品，不附带代理服务、订阅或节点。
 
-[下载 v21.0.8](https://github.com/313733807GG/netmonitor-pro/releases/tag/v21.0.8) · [使用与维护](docs/USAGE.md) · [交给 AI 安装](docs/AI_INSTALL.md) · [IP 检测入口](docs/CLASH_VERGE_SETUP.md) · [更新记录](CHANGELOG.md)
+[下载 v21.0.8](https://github.com/313733807GG/netmonitor-pro/releases/tag/v21.0.8) · [详细安装](docs/INSTALLATION.md) · [日常使用](docs/USAGE.md) · [后期维护](docs/MAINTENANCE.md) · [交给 AI 安装](docs/AI_INSTALL.md) · [IP 检测入口](docs/CLASH_VERGE_SETUP.md) · [更新记录](CHANGELOG.md)
 
 ## 界面
 

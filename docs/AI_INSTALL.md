@@ -2,9 +2,11 @@
 
 下面整段可复制给具有 Windows 本机文件/终端权限的 AI 助手。纯网页聊天 AI 没有本机权限时，只能指导用户完成对应步骤。不要把订阅、密钥或完整日志发给在线 AI。
 
+这份是安装任务入口，详细内容分在：[安装/校验/升级/卸载](INSTALLATION.md)、[日常使用与界面](USAGE.md)、[Clash Verge检测入口](CLASH_VERGE_SETUP.md)、[后期维护与AI维护任务](MAINTENANCE.md)。这些文档同时随源码和便携包提供，无需只靠聊天上下文维护。
+
 ---
 
-请帮我安装公开仓库 https://github.com/313733807GG/netmonitor-pro 的 **v21.0.8**。请先阅读该版本 README、docs/USAGE.md、docs/CLASH_VERGE_SETUP.md 及 examples/clash-verge-ip-quality.js，再执行以下步骤：
+请帮我安装公开仓库 https://github.com/313733807GG/netmonitor-pro 的 **v21.0.8**。请先完整阅读该版本 README、docs/INSTALLATION.md、docs/USAGE.md、docs/CLASH_VERGE_SETUP.md、docs/MAINTENANCE.md 及 examples/clash-verge-ip-quality.js，再执行以下步骤：
 
 1. 检查 Windows 架构、Clash Verge Rev 是否安装/运行、NetMonitor 是否已有实例及安装目录、127.0.0.1:17893 是否占用。本版本仅针对 Clash Verge Rev 适配，其他 Mihomo 客户端需先确认兼容性；非 Mihomo 内核不要继续安装。不要结束无关进程。
 2. 只从本仓库 v21.0.8 Release 下载 NetMonitor-v21.0.8-windows-x64.zip 与 SHA256SUMS.txt，核对 SHA256，不从第三方镜像下载 EXE。源码 ZIP 不是便携程序。便携包无须安装 Python。若无法访问 Release 或校验失败，报告错误，不绕过。
@@ -15,6 +17,7 @@
 7. 启动NetMonitor并处理正常Windows UAC提示。若应用控制阻止EXE或DLL，报告具体文件及安全事件，不关闭安全保护，不复制来源不明DLL或重新打包碰运气。不要并行启动源码版/EXE抢占同一ETW会话。基本验收：进程实际路径正确、精准采集状态正常、控制API可用、原账本可读且继续增长。
 8. 在系统代理/TUN开启且已确认AI出口后，验证IP质量结果或明确错误，检测组应恢复REJECT、普通组选择不变。网站限流/人机验证时不绕过。没有可用代理或检测入口时如实说明未完成的验收，不能把等待/未知当成功。
 9. 告知实际安装位置、版本、哈希校验结果、使用到的备份位置、检测入口状态及未完成事项。说明未知名称是静态本地识别，需要定期审阅unknown-targets.json并核实后更新connection_labels.py/重新构建；不得公开上传我的原始日志、账本、节点或密钥。
+10. 建立我本机的维护记录，写明安装目录、源码位置（如有）、数据/设置位置、版本、校验和检测入口状态。将详细说明文档及其相对链接一并保留，让我以后可把docs/MAINTENANCE.md中的维护任务交给另一个AI；不要在记录里保存明文密钥，也不要自行设置周期任务或开机自启。
 
 本次只安装上述软件及必要的专用检测入口，不更改普通分流规则、系统安全策略、代理商订阅或其他软件；涉及这些额外变更时先说明原因。
 
@@ -23,3 +26,5 @@
 ## 自行检查安装结果
 
 窗口出现不代表所有功能均已验证。可核对版本、流量采集、控制接口、数据续写和专用检测入口。IP评分需要可用代理、真实AI出口和第三方服务同时可达；网络/验证失败应显示明确错误。
+
+后续出现未知连接、评分失效、升级失败或账本异常时，使用[后期维护说明](MAINTENANCE.md)，其中包含可复制给AI的维护任务、源码模块对应关系、证据要求、备份/回退和排障步骤。安装授权不自动等于永久授权修改所有网络配置。
