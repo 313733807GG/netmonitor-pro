@@ -4,6 +4,40 @@ import ntpath
 import time
 
 ALIASES = (
+    # CleanIP's own page documents this DNS-test zone and analytics endpoint.
+    # Do not generalize to all of proxypurity.com without equivalent evidence.
+    ('dp.proxypurity.com', 'CleanIP · DNS 检测'),
+    ('stats.proxypurity.com', 'CleanIP · 网站统计'),
+    # 2026-10-28 first-party documentation / site code; see 21.0.11 review notes.
+    ('bitwarden.com', 'Bitwarden · 密码管理'),
+    ('bitwarden.net', 'Bitwarden · 图标及资源'),
+    ('salesmartly.com', 'SaleSmartly · 网页客服'),
+    ('crisp.chat', 'Crisp · 网页客服'),
+    ('stripe.com', 'Stripe · 支付服务'),
+    ('iplocate.io', 'IPLocate · IP 查询'),
+    ('ipquery.io', 'IPQuery · IP 查询'),
+    ('proxycheck.io', 'ProxyCheck · IP 检测'),
+    ('ip-api.com', 'IP-API · IP 查询'),
+    ('api.myip.com', 'MyIP · 公网 IP 查询'),
+    ('ident.me', 'ident.me · 公网 IP 查询'),
+    ('freeipapi.com', 'FreeIPAPI · IP 查询'),
+    ('surfsharkdns.com', 'Surfshark · DNS 泄漏检测'),
+    ('posthog.com', 'PostHog · 网站分析'),
+    ('canny.io', 'Canny · 用户反馈'),
+    ('pypi.org', 'PyPI · Python 软件包'),
+    ('files.pythonhosted.org', 'PyPI · 软件包下载'),
+    ('office.net', '微软 Office · 应用资源'),
+    ('office365.com', '微软 Microsoft 365'),
+    ('livechatinc.com', 'LiveChat · 网页客服'),
+    ('vivo.com.cn', 'vivo · 应用服务'),
+    ('vivo.com', 'vivo · 应用服务'),
+    ('global.stun.twilio.com', 'Twilio · STUN 网络服务'),
+    ('nodejs.org', 'Node.js · 开发工具'),
+    ('gitlab.com', 'GitLab · 代码托管'),
+    ('azul.com', 'Azul · Java 服务'),
+    ('zendesk.com', 'Zendesk · 网页客服'),
+    ('cookieyes.com', 'CookieYes · 隐私同意管理'),
+    ('globalping.io', 'Globalping · 网络检测'),
     # 2026-10-24 first-party pages and local application evidence.
     ('antigravity.google', 'Google Antigravity'),
     ('antigravity-unleash.goog', 'Antigravity · 应用服务'),

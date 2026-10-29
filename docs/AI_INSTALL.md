@@ -1,18 +1,20 @@
 # 交给 AI 安装 NetMonitor
 
+> v22.0.1 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
+
 下面整段可复制给具有 Windows 本机文件/终端权限的 AI 助手。纯网页聊天 AI 没有本机权限时，只能指导用户完成对应步骤。不要把订阅、密钥或完整日志发给在线 AI。
 
 这份是安装任务入口，详细内容分在：[安装/校验/升级/卸载](INSTALLATION.md)、[日常使用与界面](USAGE.md)、[Clash Verge检测入口](CLASH_VERGE_SETUP.md)、[后期维护与AI维护任务](MAINTENANCE.md)。这些文档同时随源码和便携包提供，无需只靠聊天上下文维护。
 
 ---
 
-请帮我安装公开仓库 https://github.com/313733807GG/netmonitor-pro 的 **v21.0.8**。请先完整阅读该版本 README、docs/INSTALLATION.md、docs/USAGE.md、docs/CLASH_VERGE_SETUP.md、docs/MAINTENANCE.md 及 examples/clash-verge-ip-quality.js，再执行以下步骤：
+请帮我安装公开仓库 https://github.com/313733807GG/netmonitor-pro 的 **v22.0.1**。请先完整阅读该版本 README、docs/INSTALLATION.md、docs/USAGE.md、docs/CLASH_VERGE_SETUP.md、docs/MAINTENANCE.md 及 examples/clash-verge-ip-quality.js，再执行以下步骤：
 
-1. 检查 Windows 架构、Clash Verge Rev 是否安装/运行、NetMonitor 是否已有实例及安装目录、127.0.0.1:17893 是否占用。本版本仅针对 Clash Verge Rev 适配，其他 Mihomo 客户端需先确认兼容性；非 Mihomo 内核不要继续安装。不要结束无关进程。
-2. 只从本仓库 v21.0.8 Release 下载 NetMonitor-v21.0.8-windows-x64.zip 与 SHA256SUMS.txt，核对 SHA256，不从第三方镜像下载 EXE。源码 ZIP 不是便携程序。便携包无须安装 Python。若无法访问 Release 或校验失败，报告错误，不绕过。
+1. 检查 Windows 架构、Clash Verge Rev 是否安装/运行、NetMonitor 是否已有实例及安装目录、127.0.0.1:17893 是否占用。本版本已在 Clash Verge Rev / Mihomo v1.19.32 和 FlClash 0.9.2 / Mihomo v1.19.33 实机验证。其他 Mihomo 客户端可能适用但需自行适配；非 Mihomo 内核不建议下载使用。不要结束无关进程。
+2. 只从本仓库 v22.0.1 Release 下载 NetMonitor-v22.0.1-windows-x64.zip 与 SHA256SUMS.txt，核对 SHA256，不从第三方镜像下载 EXE。源码 ZIP 不是便携程序。便携包无须安装 Python。若无法访问 Release 或校验失败，报告错误，不绕过。
 3. 优先沿用已存在的 NetMonitor 安装位置；首次安装选择当前用户可写的独立目录，并报告实际路径。存在旧版本时先协调退出，备份完整旧安装、%LOCALAPPDATA%\NetMonitorPro 及 HKCU\Software\NetMonitorPro 设置。SQLite 运行中只能使用一致性备份，不能只复制正在写入的主文件。不要删除用户历史。
-4. 完整解压到暂存目录，检查 NetMonitor.exe、_internal、说明与许可均在。确认 EXE 文件版本21.0.8.0，再将完整发行目录安装到目标位置；如创建快捷方式，明确正确的 EXE 及工作目录，不设置开机自启或计划任务，除非我另有要求。
-5. IP质量功能依赖 Clash Verge 专用入口。读取现有有效配置和全局脚本时只使用必要字段，勿输出订阅或密钥。根据仓库示例合并 addNetMonitorProbe 到现有 main 的返回前，保留原规则、订阅和普通组选择，避免重复插入。没有这一步的需求或无法可靠合并时，先完成基础监控并说明评分尚未配置，不覆盖现有脚本。
+4. 完整解压到暂存目录，检查 NetMonitor.exe、_internal、说明与许可均在。确认 EXE 文件版本22.0.1.0，再将完整发行目录安装到目标位置；如创建快捷方式，明确正确的 EXE 及工作目录，不设置开机自启或计划任务，除非我另有要求。
+5. 按当前客户端读取CLASH_VERGE_SETUP或FLCLASH_SETUP。IP质量依赖专用本机入口。Verge合并全局脚本；FlClash合并并逐订阅绑定脚本，先核对standard/script互斥、附加规则和兜底设置。只读取必要字段，勿输出订阅/密钥。保留原规则、订阅和普通选择组；无法可靠合并时先完成基础监控并说明评分尚未配置。
 6. 合并前保存现有脚本副本。检查保留组/监听器名称冲突和17893端口冲突，监听器必须是127.0.0.1而非0.0.0.0，专用组默认REJECT，UDP关闭，不把系统/浏览器代理改成17893。若需应用/重载Clash Verge，先告知可能中断当前网络并等待我确认合适时机，不在对话进行中自行重载。
 7. 启动NetMonitor并处理正常Windows UAC提示。若应用控制阻止EXE或DLL，报告具体文件及安全事件，不关闭安全保护，不复制来源不明DLL或重新打包碰运气。不要并行启动源码版/EXE抢占同一ETW会话。基本验收：进程实际路径正确、精准采集状态正常、控制API可用、原账本可读且继续增长。
 8. 在系统代理/TUN开启且已确认AI出口后，验证IP质量结果或明确错误，检测组应恢复REJECT、普通组选择不变。网站限流/人机验证时不绕过。没有可用代理或检测入口时如实说明未完成的验收，不能把等待/未知当成功。

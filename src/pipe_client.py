@@ -70,6 +70,17 @@ from controller_transport import ControllerTransport
 
 class MihomoPipe(ControllerTransport):
 
+    def fixed_session(self):
+        """Keep an in-flight probe and its REJECT cleanup on the same client."""
+        session = MihomoPipe()
+        with self._lock:
+            session._chan = self._chan
+            session.client_id = self.client_id
+            session.generation = self.generation
+            session.channel_name = self.channel_name
+            session.version = self.version
+        return session
+
     def select_probe_node(self, node):
         """Only write the user-authorized NetMonitor selector. No reload API."""
         from ip_quality import PROBE_GROUP

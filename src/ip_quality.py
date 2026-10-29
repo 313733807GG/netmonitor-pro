@@ -8,6 +8,10 @@ from pathlib import Path
 import re
 import ssl
 import time
+import logging
+from flclash_quality import UNKNOWN_TYPE_LABELS
+from cleanip_details import parse_report
+import ui_theme as theme
 
 PROBE_GROUP = 'NetMonitor-IP-Check'
 PROBE_PORT = 17893
@@ -66,12 +70,9 @@ def ai_target(connections, snapshot, mode, previous=None):
             return dict(previous,evidence='最近确认的 AI 出口（当前无活跃 AI 连接）')
     return {'state':'waiting','node':'','group':'','evidence':'等待 AI 实际连接确认'}
 
-def profile_id():
-    try:
-        p=Path(os.environ.get('APPDATA',''))/'io.github.clash-verge-rev.clash-verge-rev/profiles.yaml'
-        m=re.search(r'^current:\s*(\S+)',p.read_text(encoding='utf-8-sig'),re.M)
-        return m[1] if m else 'unknown'
-    except OSError: return 'unknown'
+def profile_id(channel=None, client=None):
+    from proxy_clients import profile_identity
+    return profile_identity(channel, client)
 
 def quality_key(data):
     if not data.get('api_on') or not (data.get('sp_on') or data.get('tun_on')): return ''
@@ -86,8 +87,14 @@ class QualityCache:
         if not key or self.pending is not None or (key in self.results and not manual): return False
         self.pending=key;return True
     def finish(self,key,result):
-        self.results[key]=result
         if self.pending==key:self.pending=None
+        # A lifecycle cancellation is not the node's first completed test.
+        if result.get('cancelled'):return
+        previous=self.results.get(key,{})
+        if (result.get('errors') and not any(result.get(k) for k in ('ippure','cleanip'))
+                and any(previous.get(k) for k in ('ippure','cleanip'))):
+            self.results[key]=dict(previous,refresh_errors=result['errors'],refresh_time=result.get('time',''))
+        else:self.results[key]=result
 
 def score(value):
     if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=100:
@@ -102,7 +109,15 @@ def ippure_badge(value):
 
 def clean_color(value):
     v=score(value)
-    return '#22c55e' if v>=85 else ('#a6bd25' if v>=70 else ('#e2b900' if v>=50 else '#ef5350'))
+    return theme.SCORE_GREEN if v>=85 else (theme.SCORE_LIME if v>=70 else (theme.SCORE_YELLOW if v>=50 else theme.SCORE_RED))
+
+def risk_color(value):
+    """Same CleanIP palette, reversing the low-is-good risk direction."""
+    return clean_color(100-score(value))
+
+def flclash_color(level):
+    # Categorical evidence only; these colors do not create a numeric score.
+    return {'good':theme.SCORE_GREEN,'normal':theme.SCORE_YELLOW,'risky':theme.SCORE_RED}.get(level,theme.MUTED)
 
 def parse_ippure(body):
     obj=json.loads(body)
@@ -182,7 +197,7 @@ def type_badges(result):
     badges=[]
     for field,flag,positive,negative in (('native_type','broadcast','原生 IP','广播 IP'),('ip_type','residential','住宅 IP','非住宅 IP')):
         original=clean.get(field,'')
-        known=original and original not in ('未知','未知 IP','待确认','—','-')
+        known=original and original.strip().casefold() not in UNKNOWN_TYPE_LABELS
         p=pure.get(flag)
         p_negative=(p is True) if flag=='broadcast' else (p is False)
         p_positive=(p is False) if flag=='broadcast' else (p is True)
@@ -207,6 +222,11 @@ def type_badges(result):
         if conflict:label+=' · 分歧';detail+='\n按约定优先显示非原生/非住宅证据；保留各站原结论。'
         elif not (known and isinstance(p,bool)):detail+='\n尚未获得两站共同印证。'
         badges.append((label,color,detail,source))
+    if result.get('flclash'):
+        from flclash_quality import merge_residential_badge, details
+        badges[1]=merge_residential_badge(result,badges[1])
+        native=badges[0]
+        badges[0]=(native[0],native[1],native[2]+'\n'+details(result),native[3])
     return badges
 
 def connection_for_port(pipe,port,owner=None):
@@ -217,7 +237,7 @@ def connection_for_port(pipe,port,owner=None):
         time.sleep(.15)
     return None
 
-def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False):
+def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False,max_bytes=262144):
     """Never follow redirects or fall back to direct access. Check real chain."""
     allowed={'my.ippure.com','cleanip.io','chatgpt.com'}
     if host not in allowed:raise ValueError('未允许的检测地址')
@@ -236,7 +256,7 @@ def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False):
             chains=(route or {}).get('chains',[])
             if not chains or chains[0]!=node or PROBE_GROUP not in chains:
                 raise ValueError('检测出口未能核实，未采集评分')
-        conn.request('GET',path,headers={'Host':host,'Accept':'application/json, text/plain','Accept-Encoding':'identity','User-Agent':'NetMonitor/21 IP-quality','Connection':'close'})
+        conn.request('GET',path,headers={'Host':host,'Accept':'application/json, text/plain, text/html','Accept-Encoding':'identity','User-Agent':'NetMonitor/22 IP-quality','Connection':'close'})
         response=conn.getresponse()
         if node is None and host=='chatgpt.com':
             return b'',route  # even a 403 confirms the connection's real route
@@ -249,7 +269,7 @@ def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False):
             chunk=response.read1(16384)
             if not chunk:break
             chunks.append(chunk);size+=len(chunk)
-            if size>262144:raise ValueError('检测响应过大')
+            if size>max_bytes:raise ValueError('检测响应过大')
         return b''.join(chunks),route
     finally:
         conn.close()
@@ -257,6 +277,7 @@ def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False):
 
 def collect_quality(pipe,node,owner=None):
     result={'node':node,'time':time.strftime('%Y-%m-%d %H:%M:%S'),'errors':{}}
+    if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
     snapshot=pipe.proxies()
     group=snapshot.get('proxies',{}).get(PROBE_GROUP,{})
     if group.get('type')!='Selector' or node not in group.get('all',[]) or not proxy_leaf(snapshot,node):
@@ -264,15 +285,34 @@ def collect_quality(pipe,node,owner=None):
     if not pipe.select_probe_node(node):raise ValueError('无法设置检测专用出口')
     try:
         for label,host,path,parser in (('ippure','my.ippure.com','/v1/info',parse_ippure),('cleanip','cleanip.io','/cli',parse_cleanip)):
-            if owner is not None and owner.isInterruptionRequested():break
+            if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
             try:
-                if pipe.configs().get('mode')=='direct':raise ValueError('已切换直连模式，停止检测')
+                if pipe.configs().get('mode') not in ('rule','global'):
+                    return dict(result,cancelled=True)
                 body,_=proxy_get(pipe,host,path,PROBE_PORT,node,owner)
                 result[label]=parser(body)
             except Exception as exc:result['errors'][label]=str(exc)[:180]
+        if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
+        if result.get('cleanip'):
+            try:
+                if pipe.configs().get('mode') not in ('rule','global'):return dict(result,cancelled=True)
+                ip=result['cleanip']['ip']
+                body,_=proxy_get(pipe,'cleanip.io','/'+ip,PROBE_PORT,node,owner,max_bytes=2*1024*1024)
+                result['cleanip']['risk_details']=parse_report(body,ip)
+            except Exception as exc:result['errors']['cleanip_details']=str(exc)[:180]
+        if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
         if result.get('ippure') and result.get('cleanip'):
             result['ip_mismatch']=result['ippure']['ip']!=result['cleanip']['ip']
+        if getattr(pipe,'client_id','') in ('flclash','verge'):
+            from flclash_quality import read_quality
+            ips={result[key]['ip'] for key in ('ippure','cleanip') if result.get(key)}
+            if len(ips)==1:
+                result['flclash']=read_quality(next(iter(ips)))
+            else:
+                result['flclash']={'status':'ip_mismatch' if ips else 'waiting',
+                                   'message':'两站出口不一致，未合并 FlClash 记录' if ips else '等待检测站确认 AI 出口 IP'}
         return result
     finally:
         # Only our dedicated selector; never restore/change ordinary groups.
-        pipe.select_probe_node('REJECT')
+        if not pipe.select_probe_node('REJECT'):
+            logging.getLogger('netmonitor').warning('IP quality cleanup failed: dedicated selector could not return to REJECT')

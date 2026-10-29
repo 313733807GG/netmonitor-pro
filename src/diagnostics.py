@@ -21,7 +21,7 @@ def setup_logging():
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
         LOG.addHandler(handler)
         LOG.setLevel(logging.INFO)
-        LOG.info("NetMonitor v21 starting python=%s", sys.version.split()[0])
+        LOG.info("NetMonitor v22 starting python=%s", sys.version.split()[0])
     except OSError:
         LOG.addHandler(logging.NullHandler())
 

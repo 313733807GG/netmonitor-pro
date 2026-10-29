@@ -9,6 +9,7 @@ import re
 import socket
 import threading
 import time
+from proxy_clients import configured_clients, read_controller_values, local_endpoints, client_for_channel
 
 LOG = logging.getLogger("netmonitor.controller")
 PIPE_PREFIX = "\\\\.\\pipe\\"
@@ -18,35 +19,11 @@ PIPE_NAMES = ("verge-mihomo", "mihomo", "mihomo-party", "clash-meta")
 def config_endpoints(paths=None):
     """Read only controller fields, never log subscriptions or credentials."""
     if paths is None:
-        base = Path(os.environ.get("APPDATA", ""))
-        paths = [base / "io.github.clash-verge-rev.clash-verge-rev" / "clash-verge.yaml",
-                 base / "io.github.clash-verge-rev.clash-verge-rev" / "config.yaml"]
+        return list(dict.fromkeys(channel for _client, channel in configured_clients()))
     result = []
     for path in paths:
         try:
-            values = {}
-            with open(path, encoding="utf-8-sig") as stream:
-                for line in stream:
-                    match = re.match(r"^(external-controller-pipe|external-controller|secret):\s*(.*?)\s*$", line)
-                    if not match:
-                        continue
-                    value = match[2]
-                    if value.startswith('"'):
-                        value = json.loads(value)
-                    elif value.startswith("'") and value.endswith("'"):
-                        value = value[1:-1].replace("''", "'")
-                    else:
-                        value = value.split(" #", 1)[0]
-                    values[match[1]] = value
-            secret = values.get("secret", "")
-            if any(ch in secret for ch in "\r\n"):
-                continue
-            pipe = values.get("external-controller-pipe", "")
-            if pipe.startswith(PIPE_PREFIX) and "\r" not in pipe and "\n" not in pipe:
-                result.append(("pipe", pipe, secret))
-            tcp = re.fullmatch(r"(?:127\.0\.0\.1|localhost|0\.0\.0\.0):([0-9]+)", values.get("external-controller", ""))
-            if tcp and 0 < int(tcp[1]) < 65536:
-                result.append(("tcp", int(tcp[1]), secret))
+            result.extend(local_endpoints(read_controller_values(path)))
         except (OSError, ValueError, TypeError):
             continue
     return list(dict.fromkeys(result))
@@ -96,6 +73,7 @@ class ControllerTransport:
         self._chan = None
         self.channel_name = ""
         self.version = ""
+        self.client_id = ""
         self.generation = 0
         self.last_error = ""
         self._lock = threading.Lock()
@@ -144,7 +122,10 @@ class ControllerTransport:
         candidates += [("pipe", self.pipe, self.secret)]
         try:
             names = sorted(os.listdir(PIPE_PREFIX))
-            secrets = list(dict.fromkeys([c[2] for c in candidates] + [self.secret, ""]))
+            secrets = list(dict.fromkeys([c[2] for c in candidates
+                                         if c[0] == 'pipe' and str(c[1]).startswith(PIPE_PREFIX+'verge-mihomo')]
+                                        + [c[2] for client, c in configured_clients() if client == 'verge']
+                                        + [self.secret, ""]))
             candidates += [("pipe", PIPE_PREFIX + name, secret) for name in names
                            if name.startswith(("verge-mihomo-sidecar-", "verge-mihomo-production-"))
                            for secret in secrets]
@@ -163,6 +144,7 @@ class ControllerTransport:
                     self._chan = channel
                     self.generation += 1
                     self.version = str(data["version"])
+                    self.client_id = client_for_channel(channel)
                     self.channel_name = ("管道 " + str(channel[1]).split("\\")[-1]
                                          if channel[0] == "pipe" else f"API 127.0.0.1:{channel[1]}")
                     self.last_error = ""
@@ -180,6 +162,7 @@ class ControllerTransport:
                 return
             self._chan = None
             self.channel_name = ""
+            self.client_id = ""
             self._config_checked = 0
 
     def _exchange(self, channel, path, timeout, method='GET', payload=None):

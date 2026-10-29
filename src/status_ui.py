@@ -9,6 +9,39 @@ import ui_theme as theme
 _icons={}
 _icon_dir=None
 
+def draw_type_icon(p,kind,color):
+    """Solid B glyphs in a 24-unit design grid; shared across source styles."""
+    p.save();p.scale(2/3,2/3)
+    c=QColor(color);pen=QPen(c,1.8,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin)
+    p.setPen(pen);p.setBrush(c);path=QPainterPath()
+    if kind=='native':
+        path.moveTo(12,2);path.cubicTo(8,4,5,5,3,5);path.lineTo(3,11)
+        path.cubicTo(3,17,8,21,12,23);path.cubicTo(16,21,21,17,21,11)
+        path.lineTo(21,5);path.cubicTo(18,5,15,4,12,2);path.closeSubpath()
+    elif kind=='home':
+        path.moveTo(2,11);path.lineTo(12,3);path.lineTo(22,11);path.lineTo(19,11)
+        path.lineTo(19,21);path.lineTo(5,21);path.lineTo(5,11);path.closeSubpath()
+    elif kind=='broadcast':
+        p.setBrush(Qt.NoBrush)
+        for rect in (QRectF(2,2,20,18),QRectF(6,6,12,10)):
+            p.drawArc(rect,-42*16,84*16);p.drawArc(rect,138*16,84*16)
+        p.drawLine(12,12,12,21);p.drawLine(8,21,16,21);p.setBrush(c)
+        path.addEllipse(QRectF(10,9,4,4))
+    elif kind=='mobile':path.addRoundedRect(QRectF(6,2,12,21),3,3)
+    elif kind=='unknown':path.addRoundedRect(QRectF(3,3,18,18),5,5)
+    else:
+        path.addRoundedRect(QRectF(3,3,18,8),2,2);path.addRoundedRect(QRectF(3,14,18,8),2,2)
+    p.drawPath(path)
+    p.setPen(QPen(QColor(theme.BACKGROUND),1.8,Qt.SolidLine,Qt.RoundCap,Qt.RoundJoin))
+    p.setBrush(Qt.NoBrush)
+    if kind=='native':p.drawLine(7,12,11,16);p.drawLine(11,16,17,9)
+    elif kind=='home':p.drawRoundedRect(QRectF(10,14,5,7),1,1)
+    elif kind=='mobile':p.drawLine(10,18,14,18)
+    elif kind=='unknown':p.drawLine(9,9,15,9);p.drawLine(15,9,12,12);p.drawPoint(12,17)
+    elif kind=='server':
+        for y in (7,18):p.drawPoint(7,y);p.drawLine(12,y,17,y)
+    p.restore()
+
 def icon_path(kind,color='#E5E7EB'):
     global _icon_dir
     key=(kind,color)
@@ -33,32 +66,19 @@ def icon_path(kind,color='#E5E7EB'):
     elif kind=='direct':
         path=QPainterPath();path.moveTo(8,1);path.lineTo(15,8);path.lineTo(8,15);path.lineTo(1,8);path.closeSubpath();p.drawPath(path)
         p.drawLine(4,8,11,8);p.drawLine(8,5,11,8);p.drawLine(8,11,11,8)
-    elif kind=='home':
-        path=QPainterPath();path.moveTo(1,7);path.lineTo(8,1);path.lineTo(15,7);path.moveTo(3,6);path.lineTo(3,14);path.lineTo(13,14);path.lineTo(13,6);p.drawPath(path)
-        p.drawRect(6,9,4,5)
-    elif kind=='native':
-        path=QPainterPath();path.moveTo(8,15);path.cubicTo(1,8,2,2,8,2);path.cubicTo(14,2,15,8,8,15);p.drawPath(path)
-        p.drawLine(5,7,7,9);p.drawLine(7,9,11,5)
-    elif kind=='broadcast':
-        p.drawLine(8,7,8,14);p.drawEllipse(QRectF(7,5,2,2))
-        p.drawArc(QRectF(2,1,12,12),-45*16,90*16);p.drawArc(QRectF(2,1,12,12),135*16,90*16)
-        p.drawLine(5,14,11,14)
-    elif kind=='mobile':
-        p.drawRoundedRect(QRectF(4,1,8,14),1,1);p.drawLine(7,12,9,12)
     else:
-        p.drawRoundedRect(QRectF(2,2,12,5),1,1);p.drawRoundedRect(QRectF(2,9,12,5),1,1)
-        p.drawPoint(5,4);p.drawPoint(5,11);p.drawLine(8,4,12,4);p.drawLine(8,11,12,11)
+        draw_type_icon(p,kind,color)
     p.end()
     path=_icon_dir.filePath(kind+color.replace('#','')+'.png');pix.save(path)
     _icons[key]=QUrl.fromLocalFile(path).toString();return _icons[key]
 
 def image_tag(kind):
-    return f'<img src="{icon_path(kind,"#FFFFFF")}" width="14" height="14" style="vertical-align:bottom">'
+    return f'<img src="{icon_path(kind,theme.ACCENT)}" width="14" height="14" style="vertical-align:bottom">'
 
 def mode_rich_text(data):
     value=data.get('strict_route') if data.get('api_on') else None
     state='开' if value is True else ('关' if value is False else '未知')
-    color=theme.GREEN if value is True else (theme.PINK if value is False else theme.MUTED)
+    color=theme.ACCENT if value is True else (theme.PINK if value is False else theme.MUTED)
     if not data.get('tun_on') and value is True:state+=' · 未生效'
     mode=data.get('mode');name={'rule':'规则','global':'全局','direct':'直连'}.get(mode,'未知')
     return (f'{image_tag("system")} 系统代理 {"开" if data.get("sp_on") else "关"} · '
@@ -105,12 +125,15 @@ class TypeBadges(QFrame):
         for text,tone,detail,source in badges:
             fg,bg,border={'positive':(theme.GREEN,'#294E43','#4BA57D'),'negative':(theme.RED,'#593741','#BD6373'),'unknown':(theme.MUTED,'#414B5A','#758397')}[tone]
             if source=='IPPure':bg=('#186638' if tone=='positive' else '#A12D3C') if tone!='unknown' else bg;fg='#FFFFFF'
+            if source=='FlClash':bg='#593741' if tone=='negative' else '#414B5A'
             kind='native' if '原生' in text and '非原生' not in text else ('broadcast' if '广播' in text or '非原生' in text else ('home' if text.startswith('住宅') else ('mobile' if '移动' in text else 'server')))
+            if tone=='unknown':kind='unknown'
             badge=BadgeLabel(text,icon_path(kind,fg))
             badge.setTextFormat(Qt.RichText)
             badge.setFixedHeight(28)
             badge.setAlignment(Qt.AlignCenter)
-            badge.setStyleSheet(f'QLabel {{ color:{fg};background:{bg};border:2px solid {border};border-radius:5px;padding:2px 5px;font-size:12px;font-weight:600;letter-spacing:0px; }}')
+            radius=12 if source=='FlClash' else 5
+            badge.setStyleSheet(f'QLabel {{ color:{fg};background:{bg};border:1px solid {border};border-radius:{radius}px;padding:2px 5px;font-size:12px;font-weight:600;letter-spacing:0px; }}')
             badge.ensurePolished()
             badge.setMaximumWidth(badge.natural_width())
             badge.setToolTip(text+'\n'+detail+'\n展示来源：'+source)

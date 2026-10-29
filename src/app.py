@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-NetMonitor Pro v21 —— AI 节点定向探测与代理感知桌面监控小组件
+NetMonitor Pro v22 —— AI 节点定向探测与代理感知桌面监控小组件
 两态设计：吸附迷你条（全局绿/代理黄 + 通断灯）<-> 悬停展开全盘面板
 """
 import sys
 from ip_quality import (PROBE_GROUP, QualityCache, ai_target, quality_key, profile_id,
-                        collect_quality, proxy_get, ippure_badge, clean_color, location_display)
+                        collect_quality, proxy_get, ippure_badge, clean_color, risk_color, flclash_color, location_display)
 from connection_labels import service_name, connection_name, label_basis, friendly_proc, GENERIC_RENDERERS
 from unknown_log import UnknownTargetLog
 import os
@@ -31,7 +31,7 @@ from PySide6.QtGui import QPainter, QColor, QPen, QFont, QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QFrame, QSystemTrayIcon, QMenu, QComboBox, QMessageBox,
-    QSizePolicy,
+    QSizePolicy, QGridLayout,
 )
 
 from pipe_client import MihomoPipe, _ai_group_rank
@@ -41,6 +41,10 @@ from diagnostics import LOG, setup_logging, display_text
 from monitoring_state import route_evidence, probe_selection, mode_label, latency_style, strict_route_state
 from status_ui import TypeBadges, mode_rich_text, ElidedLabel
 import ui_theme as theme
+from proxy_clients import CLIENT_LABELS, gui_process_matches
+from flclash_quality import risk_annotation, usable_record, details as flclash_quality_details
+from cleanip_details import risk_display
+from docking import EDGE_GAP, nearest_edge, snap_edge, dock_position
 
 # ----------------------------- 工具 -----------------------------
 
@@ -259,6 +263,7 @@ def resolve_connection_owner(metadata_process="", metadata_path="",
 
 
 HEALTH_PROBE_HOSTS = {
+    "chatgpt.com", "openai.com",
     "www.gstatic.com", "my.ippure.com", "cleanip.io", "ipwho.is", "rdap.org",
     "rdap.arin.net", "rdap.apnic.net", "rdap.db.ripe.net",
     "rdap.lacnic.net", "rdap.afrinic.net",
@@ -315,6 +320,14 @@ def proxy_action_node(data):
     """Return the AI group's selected leaf; never use the active route."""
     node = data.get("ai_node", "")
     return node if is_proxy_exit(node) else ""
+
+
+def user_explicit_proxy(connection):
+    """Explicit application proxies may remain active after OS/TUN switches off."""
+    meta=connection.get('metadata') or {}
+    if str(meta.get('type','')).casefold() not in ('http','https','socks4','socks5'):return False
+    if PROBE_GROUP in (connection.get('chains') or []) or meta.get('inboundName')=='netmonitor-ip-check':return False
+    return traffic_role_for(meta.get('sourcePort'),meta.get('host'),meta.get('process',''),meta.get('processPath',''))!='health_check'
 
 
 def proxy_health_key(data):
@@ -733,7 +746,8 @@ class IPQualityWorker(CancelableNetworkWorker):
 
     def __init__(self, pipe, node='', port=0, parent=None):
         super().__init__(parent)
-        self.pipe, self.node, self.port = pipe, node, port
+        self.pipe = pipe.fixed_session() if isinstance(pipe, MihomoPipe) else pipe
+        self.node, self.port = node, port
         self.connection = None
 
     def cancel(self):
@@ -753,6 +767,7 @@ class IPQualityWorker(CancelableNetworkWorker):
                 result = {'route': route}
         except Exception as exc:
             result = {'errors': {'request': str(exc)[:180]}, 'time': time.strftime('%Y-%m-%d %H:%M:%S')}
+        if self.isInterruptionRequested():result['cancelled']=True
         self.done.emit(result)
 
 
@@ -1209,7 +1224,7 @@ class DataEngine:
                 n = (p.info["name"] or "").lower()
                 if any(h in n for h in self.SERVICE_HINTS):
                     continue                  # clash-verge-service 等系统服务不是 GUI
-                if any(h in n for h in self.GUI_HINTS):
+                if gui_process_matches(n, getattr(self.pipe, 'client_id', '')):
                     alive = True
                     break
         except Exception:
@@ -1581,6 +1596,8 @@ class DataEngine:
         cfg = self.pipe.configs() if api_on else {}
         api_on = bool(api_on and cfg.get("mode") in ("rule", "global", "direct"))
         sw_name = self._detect_sw(api_on, sp_srv)
+        if api_on:
+            sw_name = CLIENT_LABELS.get(getattr(self.pipe, 'client_id', ''), sw_name)
         r = {
             "sys_up": sys_up, "sys_down": sys_down,
             "sw_on": api_on or bool(sw_name),
@@ -1636,9 +1653,7 @@ class DataEngine:
                 api_on = r["api_on"] = False
                 r["api_error"] = getattr(self.pipe, "last_error", "") or "连接接口返回无效数据"
             else:
-                explicit = any(str((c.get("metadata") or {}).get("type", "")).casefold()
-                               in ("http", "https", "socks4", "socks5")
-                               for c in data["connections"])
+                explicit = any(user_explicit_proxy(c) for c in data["connections"])
                 r["explicit_proxy"] = explicit
                 takeover = takeover or explicit
         elif sw_name:
@@ -1652,7 +1667,7 @@ class DataEngine:
         r["takeover"] = takeover and (api_on or bool(sw_name))
         r['ai_target_state'] = 'waiting'
         r['main_proxy_port'] = int(cfg.get('mixed-port') or cfg.get('port') or 0)
-        r['profile_id'] = profile_id()
+        r['profile_id'] = profile_id(getattr(self.pipe, '_chan', None), getattr(self.pipe, 'client_id', None))
         if r['profile_id'] != getattr(self, '_ai_profile', ''):
             self._ai_previous = None
             self._ai_profile = r['profile_id']
@@ -1930,12 +1945,14 @@ class LightDot(QWidget):
         else:
             glow = 0.25
         g = QRadialGradient(s / 2, s / 2, s / 2)
-        gc = QColor(c); gc.setAlpha(int(150 * glow))
+        gc = QColor(c); gc.setAlpha(int(235 * glow))
         g.setColorAt(0, gc)
+        middle=QColor(c);middle.setAlpha(int(145*glow));g.setColorAt(.48,middle)
         gc2 = QColor(c); gc2.setAlpha(0)
         g.setColorAt(1, gc2)
         p.setBrush(QBrush(g)); p.setPen(Qt.NoPen)
         p.drawRect(0, 0, s, s)
+        if self.state!='off':c=c.darker(int(165-65*glow))
         p.setBrush(QBrush(c))
         m = s / 4
         p.drawEllipse(QPoint(int(s / 2), int(s / 2)), int(s / 4), int(s / 4))
@@ -2118,11 +2135,11 @@ class NetMonitorWidget(QWidget):
     H_BARE = 535          # 精简状态（无节点信息块）高度：连接区同样固定露 ~10 行
     MINI_V = (78, 205)
     MINI_H = (272, 54)
-    PROBE_CHOICES = [("30 秒", 30), ("5 分钟", 300), ("10 分钟", 600), ("半小时", 1800)]
+    PROBE_CHOICES = [("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300), ("10 分钟", 600), ("半小时", 1800)]
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NetMonitor Pro v21")
+        self.setWindowTitle("NetMonitor Pro v22")
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.engine = DataEngine()
@@ -2144,6 +2161,9 @@ class NetMonitorWidget(QWidget):
         self.drag_pos = None
         self._shutting_down = False
         self.probe_worker = None
+        self.probe_retry_timer = QTimer(self)
+        self.probe_retry_timer.setSingleShot(True)
+        self.probe_retry_timer.timeout.connect(self.start_probe)
         self.probe_state = None      # True/False/None(未测)
         self.quality_worker = None
         self.route_worker = None
@@ -2200,7 +2220,7 @@ class NetMonitorWidget(QWidget):
         self.setFixedWidth(self.W)
         self.resize(self.W, self.H)
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(EDGE_GAP, EDGE_GAP, EDGE_GAP, EDGE_GAP)
         self.panel = QFrame()
         self.panel.setObjectName("panel")
         self.panel.setStyleSheet(f"""
@@ -2255,7 +2275,7 @@ class NetMonitorWidget(QWidget):
 
         # 标题栏
         top = QHBoxLayout()
-        title = QLabel("⚡ NetMonitor Pro 21")
+        title = QLabel("⚡ NetMonitor Pro 22")
         title.setStyleSheet("font-size:13px; font-weight:600;")
         btn_close = QPushButton("✕")
         btn_close.setFixedWidth(28)
@@ -2276,9 +2296,9 @@ class NetMonitorWidget(QWidget):
 
         # 三盏灯
         lights = QHBoxLayout()
-        self.light_sw = LightDot("代理软件运行状态", size=20)
-        self.light_take = LightDot("代理接管状态（系统代理/TUN）", size=20)
-        self.light_node = LightDot("AI服务当前手选节点的可用状态", size=20)
+        self.light_sw = LightDot("代理软件运行状态", size=27)
+        self.light_take = LightDot("代理接管状态（系统代理/TUN）", size=27)
+        self.light_node = LightDot("AI服务当前手选节点的可用状态", size=27)
         for dot, name in ((self.light_sw, "软件"), (self.light_take, "接管"), (self.light_node, "AI节点")):
             box = QHBoxLayout()
             box.setSpacing(5)
@@ -2377,31 +2397,45 @@ class NetMonitorWidget(QWidget):
         self.lbl_latency = QLabel("— ms")
         self.lbl_latency.setFixedSize(78, 32)
         self.lbl_latency.setTextFormat(Qt.PlainText)
-        self.lbl_latency.setAlignment(Qt.AlignCenter)
+        self.lbl_latency.setAlignment(Qt.AlignRight|Qt.AlignVCenter)
         self.lbl_latency.setStyleSheet(f"color:{DIM}; font-size:13px; font-weight:600; letter-spacing:0px;")
         row.addWidget(self.btn_delay, 0, Qt.AlignBottom)
         bl.addWidget(self.lbl_modes); bl.addWidget(self.lbl_node)
         bl.addWidget(self.lbl_split)
-        quality_row = QHBoxLayout()
+        quality_row = QGridLayout()
+        self.quality_grid=quality_row
+        quality_row.setHorizontalSpacing(8)
+        quality_row.setVerticalSpacing(5)
+        quality_row.setColumnStretch(0, 0)
+        quality_row.setColumnStretch(1, 1)
         self.lbl_ippure = QLabel('IPPure：等待 AI 出口')
         self.lbl_ippure.setTextFormat(Qt.RichText)
-        self.lbl_ippure.setStyleSheet('color:#FFFFFF; font-size:12.5px; letter-spacing:0px;')
-        quality_row.addWidget(self.lbl_ippure, 1)
+        self.lbl_ippure.setStyleSheet('color:#FFFFFF; font-size:12.5px; font-weight:700; letter-spacing:0px;')
+        quality_row.addWidget(self.lbl_ippure, 0, 0)
         bl.addLayout(quality_row)
         self.lbl_cleanip = QLabel('CleanIP：—　风险：—')
         self.lbl_cleanip.setTextFormat(Qt.RichText)
-        self.lbl_cleanip.setStyleSheet('color:#FFFFFF; font-size:12.5px; letter-spacing:0px;')
+        self.lbl_cleanip.setStyleSheet('color:#FFFFFF; font-size:12.5px; font-weight:700; letter-spacing:0px;')
         self.ip_type_badges = TypeBadges()
-        bl.addWidget(self.lbl_cleanip)
+        quality_row.addWidget(self.lbl_cleanip, 1, 0)
+        self.lbl_cleanrisk=QLabel('风险：—')
+        self.lbl_cleanrisk.setTextFormat(Qt.RichText)
+        self.lbl_cleanrisk.setStyleSheet('color:#FFFFFF;font-size:12.5px;font-weight:700;letter-spacing:0px;')
+        quality_row.addWidget(self.lbl_cleanrisk, 1, 1)
         risk_row = QHBoxLayout()
         risk_row.setSpacing(8)
+        self.lbl_flclash = QLabel('Fl：—')
+        self.lbl_flclash.setTextFormat(Qt.RichText)
+        self.lbl_flclash.setStyleSheet('color:#FFFFFF;font-size:12.5px;font-weight:700;letter-spacing:0px;')
+        quality_row.addWidget(self.lbl_flclash,0,1)
         self.lbl_risk_flags = ElidedLabel()
-        self.lbl_risk_flags.setMaximumWidth(135)
-        self.lbl_risk_flags.setStyleSheet('color:#FFFFFF;font-size:11.5px;')
+        self.lbl_risk_flags.setStyleSheet('color:#FFFFFF;font-size:12.5px;font-weight:700;letter-spacing:0px;')
         self.lbl_location = ElidedLabel()
-        self.lbl_location.setStyleSheet(f'color:{GREEN};font-size:12.5px;')
-        risk_row.addWidget(self.lbl_risk_flags, 2)
-        risk_row.addWidget(self.lbl_location, 3)
+        self.lbl_location.setSizePolicy(QSizePolicy.Preferred,QSizePolicy.Fixed)
+        self.lbl_location.setAlignment(Qt.AlignRight|Qt.AlignVCenter)
+        self.lbl_location.setStyleSheet(f'color:{theme.ACCENT};font-size:13px;font-weight:600;letter-spacing:0px;')
+        risk_row.addWidget(self.lbl_risk_flags, 1)
+        risk_row.addWidget(self.lbl_location, 0)
         bl.addLayout(risk_row)
         types_row = QHBoxLayout()
         types_row.setSpacing(8)
@@ -2523,7 +2557,7 @@ class NetMonitorWidget(QWidget):
         menu.addSeparator(); menu.addAction(self.act_auto)
         menu.addSeparator(); menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
-        self.tray.setToolTip("NetMonitor Pro 21")
+        self.tray.setToolTip("NetMonitor Pro 22")
         self.tray.activated.connect(lambda r_: self.showNormal() if r_ == QSystemTrayIcon.Trigger else None)
         self.tray.show()
         self._update_history_actions({
@@ -2656,6 +2690,7 @@ class NetMonitorWidget(QWidget):
         node = proxy_action_node(d)
         if not target or not node or not d.get("api_on"):
             return
+        self.probe_retry_timer.stop()
         self._probe_target = target
         self._probe_node = node
         self._probe_group = d.get("ai_group", "")
@@ -2711,12 +2746,13 @@ class NetMonitorWidget(QWidget):
             # 此后每 30 秒持续补测直到恢复——出口从直连切回节点后红灯会自己变绿，不用等周期
             self._probe_retry = getattr(self, "_probe_retry", 0) + 1
             delay_ms = 5000 * self._probe_retry if self._probe_retry <= 3 else 30000
-            QTimer.singleShot(delay_ms, self.start_probe)
+            self.probe_retry_timer.start(delay_ms)
             if prev is True:
                 self.tray.showMessage("NetMonitor Pro", "⚠ 当前节点的 AI 目标探测失败；不代表节点所有网站都不可用", QSystemTrayIcon.Warning, 6000)
             self._node_bad = True
         else:
             self._probe_retry = 0
+            self.probe_retry_timer.stop()
             if prev is False and getattr(self, "_node_bad", False):
                 self.tray.showMessage("NetMonitor Pro", "✓ AI 节点已恢复", QSystemTrayIcon.Information, 4000)
             self._node_bad = False
@@ -2740,7 +2776,9 @@ class NetMonitorWidget(QWidget):
 
     _was_mini = False
 
-    def enter_mini(self, orientation, edge=None):
+    def enter_mini(self, orientation, edge=None, screen=None):
+        screen=screen if screen is not None else self._cur_screen()
+        edge=edge or nearest_edge(self.frameGeometry(),screen,('l','r') if orientation=='v' else ('t','b'))[0]
         self._was_mini = False
         self.mode = "mini_h" if orientation == "h" else "mini_v"
         self.pinned = False
@@ -2749,7 +2787,7 @@ class NetMonitorWidget(QWidget):
         (self.mini_v if orientation == "h" else self.mini_h).hide()
         self.setFixedWidth((self.MINI_H if orientation == "h" else self.MINI_V)[0])
         self.resize(*(self.MINI_H if orientation == "h" else self.MINI_V))
-        self._dock_to_edge(edge)
+        self._dock_to_edge(edge,screen)
 
     def exit_mini(self):
         self._was_mini = True
@@ -2757,10 +2795,7 @@ class NetMonitorWidget(QWidget):
         # 若先放大，右/下边缘吸附时窗口中心会溢出到相邻屏幕（或屏外），被误判到别的显示器
         pre = self.frameGeometry()
         screen = self._cur_screen(pre.center())
-        cx, cy = pre.center().x(), pre.center().y()
-        d = {"l": cx - screen.left(), "r": screen.right() - cx,
-             "t": cy - screen.top(), "b": screen.bottom() - cy}
-        edge = min(d, key=d.get)
+        edge = getattr(self,'_dock_edge',None) or nearest_edge(pre,screen)[0]
         self._dock_edge = edge          # 记住吸附边，收回时原边返回，不重新猜
         self.mode = "full"
         self.setFixedWidth(self.W)
@@ -2788,21 +2823,12 @@ class NetMonitorWidget(QWidget):
         s = QApplication.screenAt(point if point is not None else self.frameGeometry().center())
         return (s or QApplication.primaryScreen()).availableGeometry()
 
-    def _dock_to_edge(self, force_edge=None):
+    def _dock_to_edge(self, force_edge=None, screen=None):
         """仅迷你条调用：按当前所在屏幕贴边；force_edge 指定时直接贴该边（收回场景用）"""
-        screen = self._cur_screen()
-        x, y = self.x(), self.y()
-        cx, cy = x + self.width() / 2, y + self.height() / 2
-        d = {"l": cx - screen.left(), "r": screen.right() - cx,
-             "t": cy - screen.top(), "b": screen.bottom() - cy}
-        edge = force_edge or min(d, key=d.get)
+        screen = screen if screen is not None else self._cur_screen()
+        edge = force_edge or nearest_edge(self.frameGeometry(),screen,('l','r') if self.mode=='mini_v' else ('t','b'))[0]
         self._dock_edge = edge           # 用户手动吸附也更新记忆
-        if self.mode == "mini_v":
-            nx = screen.left() if edge == "l" else screen.right() - self.width() + 1
-            self.move(nx, max(screen.top() + 30, min(y, screen.bottom() - self.height() - 30)))
-        elif self.mode == "mini_h":
-            ny = screen.top() if edge == "t" else screen.bottom() - self.height() + 1
-            self.move(max(screen.left() + 30, min(x, screen.right() - self.width() - 30)), ny)
+        self.move(*dock_position(self.frameGeometry(),screen,edge))
 
     # ---------- 事件 ----------
     def eventFilter(self, obj, ev):
@@ -2873,12 +2899,9 @@ class NetMonitorWidget(QWidget):
         # 贴边则吸附；远离边缘则留在原地（并彻底取消自动收回）
         # 以鼠标所在屏幕的边缘判定（窗口可能横跨两屏，光标位置才代表用户意图）
         screen = self._cur_screen(QCursor.pos())
-        x, y, w, h = self.x(), self.y(), self.width(), self.height()
-        near = 26
-        if x <= screen.left() + near or x + w >= screen.right() - near:
-            self.enter_mini("v")
-        elif y <= screen.top() + near or y + h >= screen.bottom() - near:
-            self.enter_mini("h")
+        edge=snap_edge(self.frameGeometry(),screen)
+        if edge:
+            self.enter_mini('v' if edge in ('l','r') else 'h',edge,screen)
         else:
             self._was_mini = False
         self._save_geo()     # 拖动/吸附结束即保存，崩溃或断电也不丢位置
@@ -3064,15 +3087,26 @@ class NetMonitorWidget(QWidget):
             return False
         self.quality_worker = IPQualityWorker(self.engine.pipe, node=d['ai_node'], parent=self)
         self.quality_worker.done.connect(lambda result, k=key: self._quality_done(k, result))
-        self.quality_worker.finished.connect(self._sync_detection_buttons)
+        self.quality_worker.finished.connect(lambda w=self.quality_worker:self._network_worker_finished('quality_worker',w))
         self.quality_worker.start()
         self._sync_detection_buttons()
         return True
 
     def _quality_done(self, key, result):
         self.quality_cache.finish(key, result)
+        if result.get('cancelled'):
+            LOG.info('IP quality cancelled; no new result cached')
+        elif result.get('errors'):
+            LOG.warning('IP quality incomplete errors=%s', result['errors'])
+        else:
+            LOG.info('IP quality complete sources=%s', ','.join(k for k in ('ippure','cleanip','flclash') if result.get(k)))
         if not self._shutting_down:
             self._render_quality(getattr(self, '_last_data', {}))
+
+    def _network_worker_finished(self, attribute, worker):
+        if getattr(self, attribute, None) is worker:setattr(self, attribute, None)
+        worker.deleteLater()
+        self._sync_detection_buttons()
 
     def _sync_detection_buttons(self):
         if self._shutting_down:return
@@ -3083,7 +3117,7 @@ class NetMonitorWidget(QWidget):
             button.setEnabled(not busy)
 
     def _route_done(self, result, mode, profile):
-        if result.get('route') and not self._shutting_down:
+        if result.get('route') and not result.get('cancelled') and not self._shutting_down:
             self.engine.pipe.ai_route_hint = dict(result, mode=mode, profile=profile, at=time.monotonic())
 
     def _refresh_quality(self, d):
@@ -3100,6 +3134,7 @@ class NetMonitorWidget(QWidget):
                 if port:
                     self.route_worker = IPQualityWorker(self.engine.pipe, port=port, parent=self)
                     self.route_worker.done.connect(lambda result, m=d['mode'], p=d['profile_id']: self._route_done(result,m,p))
+                    self.route_worker.finished.connect(lambda w=self.route_worker:self._network_worker_finished('route_worker',w))
                     self.route_worker.start()
         self._start_quality(d)
         self._render_quality(d)
@@ -3108,50 +3143,80 @@ class NetMonitorWidget(QWidget):
         key = quality_key(d)
         result = self.quality_cache.results.get(key) if key else None
         self.ip_type_badges.render(result or {})
-        clean_result = (result or {}).get('cleanip') or {}
-        flags = clean_result.get('flags') or '—'
+        flags_detail = risk_annotation(result or {})[1]
+        clean=(result or {}).get('cleanip') or {}
+        flags,clean_detail=risk_display(clean)
+        flags_detail+='\n'+clean_detail
+        if (result or {}).get('errors',{}).get('cleanip_details'):
+            flags_detail+='\n明细读取失败：'+result['errors']['cleanip_details']
+        third=usable_record(result or {})
+        if third:
+            _lbl_set(self.lbl_flclash,f'Fl：<span style="color:{flclash_color(third["level"])}">{html.escape(third["quality_label"])}</span>')
+            if third['flags']:flags+=' · Fl：'+'、'.join(third['flags'])
+        else:_lbl_set(self.lbl_flclash,'Fl：—')
+        self.lbl_flclash.setToolTip(flags_detail)
         self.lbl_risk_flags.set_full_text('标记：'+flags)
-        self.lbl_risk_flags.setToolTip('CleanIP 风险标记：'+flags)
+        self.lbl_risk_flags.setToolTip(flags_detail)
         location, location_tip = location_display(result or {})
         self.lbl_location.set_full_text(location)
-        self.lbl_location.setStyleSheet(f'color:{DIM if location in ("地区待确认", "出口不一致") else GREEN};font-size:12.5px;')
+        self._fit_location()
         self.lbl_location.setToolTip(location_tip)
         pending = bool(key and self.quality_cache.pending==key)
+        _lbl_set(self.lbl_cleanrisk,'风险：—')
         if not key:
             state = '直连 · 不检测' if d.get('ai_target_state')=='direct' else '等待 AI 代理出口'
             _lbl_set(self.lbl_ippure, 'IPPure：'+state)
-            _lbl_set(self.lbl_cleanip, 'CleanIP：—　风险：—')
-            for label in (self.lbl_ippure,self.lbl_cleanip):
+            _lbl_set(self.lbl_cleanip, 'CleanIP：—')
+            for label in (self.lbl_ippure,self.lbl_cleanip,self.lbl_cleanrisk):
                 _tip_set(label, d.get('ai_source','未开启代理接管'))
             return
         if not result:
             _lbl_set(self.lbl_ippure, 'IPPure：检测中…' if pending else 'IPPure：等待检测')
-            _lbl_set(self.lbl_cleanip, 'CleanIP：检测中…' if pending else 'CleanIP：—　风险：—')
+            _lbl_set(self.lbl_cleanip, 'CleanIP：检测中…' if pending else 'CleanIP：—')
             return
         errors=result.get('errors',{})
         pure=result.get('ippure')
         clean=result.get('cleanip')
         if pure:
-            text,color=ippure_badge(pure['score'])
-            _lbl_set(self.lbl_ippure, f'IPPure：<span style="background-color:{color};color:white;font-size:11.5px;font-weight:700">&nbsp; {text} &nbsp;</span>')
+            text,_=ippure_badge(pure['score'])
+            _lbl_set(self.lbl_ippure, f'IPPure：<span style="color:{risk_color(pure["score"])}">{html.escape(text)}</span>')
         else:
             _lbl_set(self.lbl_ippure, 'IPPure：暂不可用（悬停查看）')
         if clean:
-            risk_color=ippure_badge(clean['risk'])[1]
             _lbl_set(self.lbl_cleanip,
                 f'CleanIP：<span style="color:{clean_color(clean["score"])};font-weight:700">{clean["score"]:g} {html.escape(clean["grade"])}</span>'
-                f' /100&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;风险：<span style="color:{risk_color}">{clean["risk"]:g}</span> /100')
+                f' /100')
+            _lbl_set(self.lbl_cleanrisk,f'风险：<span style="color:{risk_color(clean["risk"])}">{clean["risk"]:g}</span> /100')
         else:
-            _lbl_set(self.lbl_cleanip, 'CleanIP：暂不可用　风险：—')
+            _lbl_set(self.lbl_cleanip, 'CleanIP：暂不可用')
         tip = f"AI节点：{d.get('ai_node')}\n{d.get('ai_source','')}\n检测时间：{result.get('time','')}\n"
         tip += '本次启动按订阅/节点缓存；切回不会自动重测。手动点击可更新。\nIPPure/风险分越低越好；CleanIP 纯净度越高越好。第三方评分仅供参考。'
         if pure: tip += '\nIPPure 出口 IP：'+pure['ip']
         if clean: tip += '\nCleanIP 出口 IP：'+clean['ip']+'\n完整标记：'+clean['flags']
+        if result.get('flclash'):tip += '\n'+flclash_quality_details(result)
         if result.get('ip_mismatch'):tip += '\n注意：两站观测 IP 不同，不能视为同一个 IP 的综合评分。'
         if d.get('other_ai_exits'):tip += '\n存在其他 AI 出口，此处优先跟随 ChatGPT 实际路径。'
         if pending:tip += '\n正在手动刷新，当前为上次结果。'
         for label,error in errors.items():tip += '\n'+label+'：'+error
-        for label in (self.lbl_ippure,self.lbl_cleanip):_tip_set(label,tip)
+        if result.get('refresh_errors'):
+            tip+='\n最近刷新失败，保留上次成功结果（不是本次新检测值）：'+str(result.get('refresh_time',''))
+            for label,error in result['refresh_errors'].items():tip+='\n'+label+'：'+error
+            self.lbl_risk_flags.set_full_text('刷新失败 · 标记：'+flags)
+            self.lbl_risk_flags.setToolTip(tip)
+        for label in (self.lbl_ippure,self.lbl_cleanip,self.lbl_cleanrisk):_tip_set(label,tip)
+
+    def _fit_location(self):
+        # Keep the right edge aligned with latency; allocate longer addresses
+        # leftwards while leaving room for the Fl grade and elided risk flags.
+        natural=self.lbl_location.fontMetrics().horizontalAdvance(self.lbl_location.full_text)+2
+        available=self.lbl_location.parentWidget().width()-20
+        # Halve the visible whitespace, not just the layout's spacing property:
+        # the former 3:2 stretch also left unused space in the left column.
+        natural_left=max(self.lbl_ippure.sizeHint().width(),self.lbl_cleanip.sizeHint().width())
+        old_right=max(natural_left+16,(available-16)*.6+16)
+        self.quality_grid.setColumnMinimumWidth(0,round((natural_left+old_right)/2-8))
+        width=min(natural,max(60,available-110))
+        self.lbl_location.setFixedWidth(width)
 
     def _compact_empty_status(self):
         # Empty QLabels still have a line-height in Qt; explicitly remove them
@@ -3190,11 +3255,11 @@ class NetMonitorWidget(QWidget):
         if traffic_status == "running":
             self.act_precise.setText("精准进程流量：已启用（ETW）")
             self.act_precise.setEnabled(False)
-            self.tray.setToolTip("NetMonitor Pro 21 · 精准进程流量已启用")
+            self.tray.setToolTip("NetMonitor Pro 22 · 精准进程流量已启用")
         elif traffic_status == "admin_required":
             self.act_precise.setText("启用精准进程流量（管理员）")
             self.act_precise.setEnabled(True)
-            self.tray.setToolTip("NetMonitor Pro 21 · 普通权限模式")
+            self.tray.setToolTip("NetMonitor Pro 22 · 普通权限模式")
         else:
             self.act_precise.setText("精准进程流量不可用")
             self.act_precise.setEnabled(False)
@@ -3224,6 +3289,7 @@ class NetMonitorWidget(QWidget):
             _tip_set(self.light_sw, "代理软件: 未运行")
         taken_over = bool(d.get("takeover"))
         effective_take = effective_proxy_takeover(d)
+        if not effective_take:self.probe_retry_timer.stop()
         current_health_key = proxy_health_key(d)
         if current_health_key != getattr(self, "_latency_key", ""):
             self._set_latency(None, 0, current_health_key, "等待当前节点的 AI 探测")
