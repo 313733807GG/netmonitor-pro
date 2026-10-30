@@ -1,6 +1,8 @@
 # FlClash 设置与维护
 
-> v22.0.1 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
+> 22.0.2：已移除Fl质量参考，原单元格留空；仅IPPure与CleanIP参与评分和类型印证。安装及新增订阅必须按[代理商检测入口说明](PROVIDER_SETUP.md)逐份检查。
+
+> v22.0.2 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
 
 实测 FlClash 0.9.2 / Mihomo v1.19.33；其他版本需要重新核对。NetMonitor支持FlClash及Clash Verge Rev，不附带代理订阅或服务。不要同时启动两个占用相同代理/控制/检测端口的内核。
 
@@ -20,7 +22,7 @@ FlClash的standard/script扩展互斥，切换前核对附加规则和matchTarge
 
 ## FlClash自身的质量结果
 
-NetMonitor只读FlClash本机数据库的同IP、3天内有效缓存，保留优/普通/风险和原类型，不换算成数字分数。需要先在FlClash的IP详情中检测/刷新，再点击NetMonitor IP质量。无缓存、过期或IP不一致时显示—，不能视为三方共同通过。
+22.0.2不再读取FlClash质量缓存。无需先在FlClash IP详情检测；NetMonitor仅查询IPPure与CleanIP。
 
 两站及FlClash的住宅/非住宅判断一致时用CleanIP样式；有明确非住宅证据优先该来源；多个负面来源按CleanIP→IPPure→FlClash优先，细分类不一致注明分歧。FlClash没有原生/广播和地区字段，这两项仍由原两站判定。
 

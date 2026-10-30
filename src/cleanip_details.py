@@ -21,11 +21,12 @@ class ReportParser(HTMLParser):
         if tag!='span':return
         self.depth+=1
         classes=set(attrs.get('class','').split())
-        if 'risk-chip' in classes:
+        if 'risk-chip' in classes or 'risk-chip-identity' in classes:
             if self.chip is not None:raise ValueError('风险明细结构异常')
-            status=next((s for s in ('hit','clear','unknown') if 'risk-chip--'+s in classes),None)
+            status=next((s for s in ('hit','clear','unknown','conflict') if 'risk-chip--'+s in classes),None)
+            if 'risk-chip-identity' in classes:status='identity'
             self.chip={'depth':self.depth,'status':status,'label':'','detail':attrs.get('title','')[:1500]}
-        elif self.chip is not None and 'risk-chip__label' in classes:self.label_depth=self.depth
+        elif self.chip is not None and classes & {'risk-chip__label','ip-identity-badge__label'}:self.label_depth=self.depth
     def handle_data(self,data):
         if self.nuxt:self.data.append(data)
         if self.chip is not None and self.label_depth is not None:self.chip['label']+=data
@@ -35,6 +36,8 @@ class ReportParser(HTMLParser):
         if self.label_depth==self.depth:self.label_depth=None
         if self.chip is not None and self.chip['depth']==self.depth:
             self.chip['label']=self.chip['label'].strip()
+            if self.chip['status']=='identity':
+                self.chip['status']='hit' if self.chip['label'] in ('机房 IP','机房IP') else 'unknown'
             if self.chip['label'] in LABELS:self.items.append(self.chip)
             self.chip=None
         self.depth-=1
@@ -60,20 +63,40 @@ def parse_report(body,expected_ip):
             'items':[{k:v for k,v in x.items() if k!='depth'} for x in items.values()],
             'data_as_of':str(at)[:80],'url':'https://cleanip.io/'+expected}
 
+def risk_colored_parts(clean, prefix='标记：'):
+    report=clean.get('risk_details') or {}
+    parts=[(prefix,None)]
+    seen=set()
+    for item in report.get('items',[]):
+        label=item['label'];status=item.get('status')
+        if status not in ('hit','conflict') or label in seen:continue
+        if seen:parts.append(('、',None))
+        seen.add(label)
+        color='#F59E0B' if status=='conflict' or label in ('机房 IP','机房IP') else '#FF4D5E'
+        parts.append((label,color))
+    if not seen:parts.append((risk_display(clean)[0],None))
+    return parts
+
+
 def risk_display(clean):
-    """Explicit hits win; retain summary if details are unavailable or disagree."""
+    """Display colored website items, including conflicts; summary is fallback only."""
     summary=str(clean.get('flags') or '—')
     report=clean.get('risk_details')
     tooltip='CleanIP 汇总：'+summary
     if not report:
         return summary,tooltip+'\n明细未取得，当前仅为汇总。'
     hits=report.get('hits',[])
-    chosen='、'.join(hits) if hits else (summary if summary not in EMPTY else '未检出')
+    marked=[x['label'] for x in report.get('items',[]) if x.get('status') in ('hit','conflict')]
+    chosen='、'.join(dict.fromkeys(marked)) or '未检出'
     tooltip+='\n网页命中明细：'+('、'.join(hits) or '未检出')
+    conflicts=[x for x in report.get('items',[]) if x.get('status')=='conflict']
+    if conflicts:
+        tooltip+='\n网页来源有分歧（不算确定命中）：'+'、'.join(x['label'] for x in conflicts)
+        tooltip+='\n'+'\n'.join(x['detail'] for x in conflicts)
     tooltip+='\n来源：'+report.get('url','')+'\n数据时间：'+report.get('data_as_of','未提供')
     summary_items=set() if summary in EMPTY else set(filter(None,re.split(r'[、,，;；|/\s·]+',summary)))
     if set(hits)!=summary_items:
-        tooltip+='\n汇总与明细不一致（文字或覆盖范围不同）；优先保留明确命中，不将差异当作全部通过。'
+        tooltip+='\n汇总与明细不一致（文字或覆盖范围不同）；展示以网页变色项目为准。'
     tooltip+='\n'+'\n'.join(x['detail'] for x in report.get('items',[]) if x.get('status')=='hit')
-    tooltip+='\n仅展示已返回的命中；未运行 DNS/WebRTC 泄漏检测。'
+    tooltip+='\n展示网页命中及来源分歧项目；打钩、未检测不列出。未运行 DNS/WebRTC 泄漏检测。'
     return chosen,tooltip

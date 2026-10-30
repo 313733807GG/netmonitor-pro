@@ -1,6 +1,8 @@
 # Clash Verge 的 IP 质量检测入口
 
-> v22.0.1 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
+> 22.0.2：已移除Fl质量参考，原单元格留空；仅IPPure与CleanIP参与评分和类型印证。安装及新增订阅必须按[代理商检测入口说明](PROVIDER_SETUP.md)逐份检查。
+
+> v22.0.2 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
 
 本版本已在 Clash Verge Rev / Mihomo v1.19.32 和 FlClash 0.9.2 / Mihomo v1.19.33 实机验证。其他 Mihomo 客户端可能适用但需自行适配；非 Mihomo 内核不建议下载使用。
 

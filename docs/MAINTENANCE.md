@@ -1,6 +1,8 @@
 # 详细后期维护与AI维护指引
 
-> v22.0.1 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
+> 22.0.2：已移除Fl质量参考，原单元格留空；仅IPPure与CleanIP参与评分和类型印证。安装及新增订阅必须按[代理商检测入口说明](PROVIDER_SETUP.md)逐份检查。
+
+> v22.0.2 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
 
 本页供使用者及具有本机权限的AI助手参考。仅Clash Verge Rev实机适配，其他Mihomo客户端需要自行核验；非Mihomo内核不建议使用。维护不意味着可以自动修改代理规则、关闭安全保护或公开个人数据。
 
@@ -78,7 +80,7 @@
 
 ## 源码改动与发布验收
 
-使用自己的Windows Python3.12环境，源码根目录运行README中的check/test/build。192项是本版基线，后续用例数量可变化。测试不应与正在运行的EXE并行启动同名ETW采集；自检需要隔离日志、账本及锁。
+使用自己的Windows Python3.12环境，源码根目录运行README中的check/test/build。183项是本版基线，后续用例数量可变化。测试不应与正在运行的EXE并行启动同名ETW采集；自检需要隔离日志、账本及锁。
 
 关键文件：`connection_labels.py`管名称；`unknown_log.py`管待鉴定持久化；`controller_transport.py`/`pipe_client.py`管控制接口；`ip_quality.py`管出口证据/取分/缓存；`monitoring_state.py`管状态判定；`traffic_capture.py`管ETW；`traffic_history.py`管账本；`app.py`/`status_ui.py`/`ui_theme.py`管界面交互。
 

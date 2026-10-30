@@ -48,9 +48,6 @@ class QualityRecoveryTests(unittest.TestCase):
     def test_palette_reverses_risk_direction(self):
         for risk in (0,15,16,30,31,50,51,100):
             self.assertEqual(q.risk_color(risk),q.clean_color(100-risk))
-        self.assertEqual(q.flclash_color('good'),q.clean_color(100))
-        self.assertEqual(q.flclash_color('normal'),q.clean_color(50))
-        self.assertEqual(q.flclash_color('risky'),q.clean_color(0))
 
     def test_own_connections_do_not_keep_takeover_on(self):
         base={'metadata':{'type':'HTTP','host':'chatgpt.com','sourcePort':61234},'chains':['A',q.PROBE_GROUP]}

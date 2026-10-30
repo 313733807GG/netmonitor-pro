@@ -9,7 +9,8 @@ import re
 import ssl
 import time
 import logging
-from flclash_quality import UNKNOWN_TYPE_LABELS
+UNKNOWN_TYPE_LABELS = {'','未知','未知 ip','未知类型','未知类型 ip','待确认','未识别',
+                       'unknown','unknown ip','unknown type','n/a','—','-'}
 from cleanip_details import parse_report
 import ui_theme as theme
 
@@ -115,10 +116,6 @@ def risk_color(value):
     """Same CleanIP palette, reversing the low-is-good risk direction."""
     return clean_color(100-score(value))
 
-def flclash_color(level):
-    # Categorical evidence only; these colors do not create a numeric score.
-    return {'good':theme.SCORE_GREEN,'normal':theme.SCORE_YELLOW,'risky':theme.SCORE_RED}.get(level,theme.MUTED)
-
 def parse_ippure(body):
     obj=json.loads(body)
     ip=str(ipaddress.ip_address(obj['ip']))
@@ -222,11 +219,6 @@ def type_badges(result):
         if conflict:label+=' · 分歧';detail+='\n按约定优先显示非原生/非住宅证据；保留各站原结论。'
         elif not (known and isinstance(p,bool)):detail+='\n尚未获得两站共同印证。'
         badges.append((label,color,detail,source))
-    if result.get('flclash'):
-        from flclash_quality import merge_residential_badge, details
-        badges[1]=merge_residential_badge(result,badges[1])
-        native=badges[0]
-        badges[0]=(native[0],native[1],native[2]+'\n'+details(result),native[3])
     return badges
 
 def connection_for_port(pipe,port,owner=None):
@@ -303,14 +295,6 @@ def collect_quality(pipe,node,owner=None):
         if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
         if result.get('ippure') and result.get('cleanip'):
             result['ip_mismatch']=result['ippure']['ip']!=result['cleanip']['ip']
-        if getattr(pipe,'client_id','') in ('flclash','verge'):
-            from flclash_quality import read_quality
-            ips={result[key]['ip'] for key in ('ippure','cleanip') if result.get(key)}
-            if len(ips)==1:
-                result['flclash']=read_quality(next(iter(ips)))
-            else:
-                result['flclash']={'status':'ip_mismatch' if ips else 'waiting',
-                                   'message':'两站出口不一致，未合并 FlClash 记录' if ips else '等待检测站确认 AI 出口 IP'}
         return result
     finally:
         # Only our dedicated selector; never restore/change ordinary groups.

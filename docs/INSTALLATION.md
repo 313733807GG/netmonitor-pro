@@ -1,15 +1,17 @@
 # 详细安装、升级与卸载
 
-> v22.0.1 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
+> 22.0.2：已移除Fl质量参考，原单元格留空；仅IPPure与CleanIP参与评分和类型印证。安装及新增订阅必须按[代理商检测入口说明](PROVIDER_SETUP.md)逐份检查。
 
-适用于 NetMonitor v22.0.1 Windows x64 便携包。仅在 Clash Verge Rev 中适配和实机验证；其他 Mihomo 客户端需要自行适配，非 Mihomo 内核不建议使用。
+> v22.0.2 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
+
+适用于 NetMonitor v22.0.2 Windows x64 便携包。仅在 Clash Verge Rev 中适配和实机验证；其他 Mihomo 客户端需要自行适配，非 Mihomo 内核不建议使用。
 
 ## 1. 准备与选择下载内容
 
 1. 确认使用 Windows x64。ARM64、32位系统和其他操作系统没有本版原生发行包，不保证兼容。
 2. 先确认 Clash Verge Rev 自身可正常联网，并记录当前使用系统代理还是 TUN，以及规则/全局/直连模式。NetMonitor 不提供代理服务。
-3. 在[本版 Release](https://github.com/313733807GG/netmonitor-pro/releases/tag/v22.0.1)下载 `NetMonitor-v22.0.1-windows-x64.zip` 和 `SHA256SUMS.txt`。
-4. `NetMonitor-v22.0.1-source.zip`、GitHub的Source code (zip/tar.gz)是源码，需要自己准备Python环境，不是双击即用的程序。
+3. 在[本版 Release](https://github.com/313733807GG/netmonitor-pro/releases/tag/v22.0.2)下载 `NetMonitor-v22.0.2-windows-x64.zip` 和 `SHA256SUMS.txt`。
+4. `NetMonitor-v22.0.2-source.zip`、GitHub的Source code (zip/tar.gz)是源码，需要自己准备Python环境，不是双击即用的程序。
 5. 已有旧版时先看本页“升级与回退”。不要边运行旧程序边覆盖文件。
 
 便携包自带运行库，不需要另装Python。EXE没有发布者代码签名；哈希只用于核对文件一致性，不代替签名或系统安全检查。
@@ -20,7 +22,7 @@
 
 ```powershell
 $packageDir = Join-Path $env:USERPROFILE 'Downloads'
-$packageName = 'NetMonitor-v22.0.1-windows-x64.zip'
+$packageName = 'NetMonitor-v22.0.2-windows-x64.zip'
 $checksumFile = Join-Path $packageDir 'SHA256SUMS.txt'
 $checksumRows = @(Get-Content -LiteralPath $checksumFile | Where-Object {
     $_ -match ('\s+' + [regex]::Escape($packageName) + '$')
@@ -55,7 +57,7 @@ NetMonitor/
 
 如果解压结果多一层`NetMonitor`，找到实际包含EXE和_internal的那层作为安装目录。不要把新目录复制到旧目录里面形成多层嵌套。
 
-启动`NetMonitor.exe`，按正常Windows UAC提示允许管理员权限，以启用ETW。可在EXE属性“详细信息”确认文件版本为`22.0.1.0`。本版已验证EXE SHA256为：
+启动`NetMonitor.exe`，按正常Windows UAC提示允许管理员权限，以启用ETW。可在EXE属性“详细信息”确认文件版本为`22.0.2.0`。本版已验证EXE SHA256为：
 
 ```text
 B0398C2F0E13BC6387D016C4C1307F935069205E92C6B7BD346C9616FFFF9D11
@@ -80,7 +82,7 @@ B0398C2F0E13BC6387D016C4C1307F935069205E92C6B7BD346C9616FFFF9D11
 
 | 检查 | 应看到什么 | 不满足时 |
 |---|---|---|
-| 程序版本与位置 | 实际启动的是选定目录下22.0.1.0 | 检查旧快捷方式、旧实例和解压层级 |
+| 程序版本与位置 | 实际启动的是选定目录下22.0.2.0 | 检查旧快捷方式、旧实例和解压层级 |
 | ETW采集 | 托盘显示“精准进程流量：已启用（ETW）” | 用正常UAC授权启动并检查日志 |
 | 控制接口 | 能读取模式、TUN、连接分流 | 核对Clash Verge服务/控制接口与版本，不公开密钥 |
 | 严格路由 | 与当前内核配置一致；未知时看悬停/日志 | 区分API失败、字段异常与TUN未生效 |

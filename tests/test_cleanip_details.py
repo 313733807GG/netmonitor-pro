@@ -21,9 +21,9 @@ class DetailTests(unittest.TestCase):
         report=parse_report(page(('VPN',)),'1.1.1.1')
         text,tip=risk_display({'flags':'未检出','risk_details':report})
         self.assertEqual(text,'VPN');self.assertIn('不一致',tip)
-    def test_summary_hit_survives_clear_details(self):
+    def test_summary_does_not_add_uncolored_items(self):
         text,tip=risk_display({'flags':'代理','risk_details':parse_report(page(),'1.1.1.1')})
-        self.assertEqual(text,'代理');self.assertIn('不一致',tip)
+        self.assertEqual(text,'未检出');self.assertIn('不一致',tip)
     def test_different_positive_results_explain_difference(self):
         text,tip=risk_display({'flags':'代理','risk_details':parse_report(page(('VPN',)),'1.1.1.1')})
         self.assertEqual(text,'VPN');self.assertIn('不一致',tip)
@@ -37,3 +37,18 @@ class DetailTests(unittest.TestCase):
         self.assertEqual(parse_report(raw,'1.1.1.1')['hits'],[])
     def test_oversize_rejected(self):
         with self.assertRaises(ValueError):parse_report(b'x'*(2*1024*1024+1),'1.1.1.1')
+
+    def test_conflict_does_not_discard_other_hits(self):
+        raw=page(('滥用',)).replace('<span class="risk-chip risk-chip--clear" title="网站依据"><span class="risk-chip__label">代理</span>'.encode(),'<span class="risk-chip risk-chip--conflict" title="来源有分歧"><span class="risk-chip__label">代理</span>'.encode())
+        report=parse_report(raw,'1.1.1.1')
+        self.assertEqual(report['hits'],['滥用'])
+        text,tip=risk_display({'flags':'[数据中心]','risk_details':report})
+        self.assertEqual(set(text.split('、')),{'代理','滥用'});self.assertIn('不算确定命中',tip)
+
+    def test_identity_badge_is_included_only_inside_risk_grid(self):
+        badge='<span class="ip-identity-badge risk-chip-identity" data-tone="warning" title="连接类型"><span class="ip-identity-badge__icon"><i></i></span><span class="ip-identity-badge__label">机房 IP</span></span>'
+        raw=page(('滥用',)).replace(b'<script',badge.encode()+b'<script',1)
+        report=parse_report(raw,'1.1.1.1')
+        self.assertEqual(set(report['hits']),{'滥用','机房 IP'})
+        raw=page().replace(b'<script',badge.replace(' risk-chip-identity','').encode()+b'<script',1)
+        self.assertEqual(parse_report(raw,'1.1.1.1')['hits'],[])

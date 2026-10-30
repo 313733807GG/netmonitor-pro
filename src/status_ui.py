@@ -88,11 +88,25 @@ def mode_rich_text(data):
 
 class ElidedLabel(QLabel):
     def __init__(self,parent=None):
-        super().__init__(parent);self.full_text='';self.setTextFormat(Qt.PlainText)
+        super().__init__(parent);self.full_text='';self._colored_parts=None;self.setTextFormat(Qt.PlainText)
         self.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed);self.setFixedHeight(20)
     def set_full_text(self,text):
+        self._colored_parts=None;self.setTextFormat(Qt.PlainText)
         self.full_text=str(text);self._update_text()
-    def _update_text(self):self.setText(self.fontMetrics().elidedText(self.full_text,Qt.ElideRight,max(0,self.contentsRect().width())))
+    def set_colored_parts(self,parts):
+        self._colored_parts=parts;self.full_text=''.join(text for text,color in parts)
+        self.setTextFormat(Qt.RichText);self._update_text()
+    def _update_text(self):
+        visible=self.fontMetrics().elidedText(self.full_text,Qt.ElideRight,max(0,self.contentsRect().width()))
+        if self._colored_parts is None:self.setText(visible);return
+        cut=len(visible)-1 if visible.endswith('…') and visible!=self.full_text else len(visible)
+        out=[];remaining=cut
+        for text,color in self._colored_parts:
+            chunk=text[:max(0,remaining)];remaining-=len(chunk)
+            if chunk:out.append('<span style="color:'+color+'">'+html.escape(chunk)+'</span>' if color else html.escape(chunk))
+            if remaining<=0:break
+        if visible.endswith('…') and visible!=self.full_text:out.append('…')
+        self.setText(''.join(out))
     def resizeEvent(self,event):super().resizeEvent(event);self._update_text()
 
 class BadgeLabel(QLabel):

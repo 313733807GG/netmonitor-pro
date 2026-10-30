@@ -4,6 +4,13 @@ import ntpath
 import time
 
 ALIASES = (
+    # 2026-10-30 official site titles + local process evidence.
+    ('primevideo.com', 'Prime Video · 视频服务'),
+    ('gitee.com', 'Gitee · 代码托管'),
+    ('dns.alidns.com', '阿里公共 DNS'),
+    ('liveupdate.msi.cn', '微星 · 软件更新'),
+    ('snowshot.top', 'Snow Shot · 截图工具'),
+
     # CleanIP's own page documents this DNS-test zone and analytics endpoint.
     # Do not generalize to all of proxypurity.com without equivalent evidence.
     ('dp.proxypurity.com', 'CleanIP · DNS 检测'),

@@ -1,6 +1,8 @@
 # 使用与维护
 
-> v22.0.1 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
+> 22.0.2：已移除Fl质量参考，原单元格留空；仅IPPure与CleanIP参与评分和类型印证。安装及新增订阅必须按[代理商检测入口说明](PROVIDER_SETUP.md)逐份检查。
+
+> v22.0.2 最新行为与维护变化见 [V22_CHANGES.md](V22_CHANGES.md)；FlClash 配置见 [FLCLASH_SETUP.md](FLCLASH_SETUP.md)。
 
 首次使用先看[详细安装](INSTALLATION.md)；需要更新别名、修复接口或处理数据问题时看[后期维护](MAINTENANCE.md)。[AI安装入口](AI_INSTALL.md)会要求助手阅读这套完整文档。
 
@@ -33,7 +35,7 @@
 
 - IPPure 为其风险系数，数值低通常更纯净；CleanIP 纯净度高通常更好，风险分低通常更好。不要把三者当作同一指标。
 - 原生/广播、住宅/非住宅是两个维度。非住宅不必然等于机房；保留网站实际分类，不能从分数反推类型。
-- 住宅维度可加入FlClash同IP有效缓存；原生/广播仍由两站判断。一致采用CleanIP样式，分歧优先明确非住宅/非原生证据；多个负面来源按CleanIP→IPPure→FlClash。无缓存不宣称三方通过，不同IP不合并。详见[FlClash说明](FLCLASH_SETUP.md)。
+- 住宅/原生维度由两站判定；一致采用CleanIP样式，分歧优先明确非住宅/非原生证据，不同IP不合并。详见[FlClash说明](FLCLASH_SETUP.md)。
 - 地区尽量显示“地区 · 城市”等两级名称，去外围国家前缀，保留台湾/香港等地区标识；一致采用 CleanIP，地址冲突显示 CleanIP 并注明分歧，不补造网站未返回的区县。
 - 风险标记很长时与地区分别省略，悬停查看完整信息。未检出不等于无风险；地理库可能过期、不同语言也可能产生分歧。
 

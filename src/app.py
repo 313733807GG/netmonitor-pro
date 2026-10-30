@@ -5,7 +5,7 @@ NetMonitor Pro v22 —— AI 节点定向探测与代理感知桌面监控小组
 """
 import sys
 from ip_quality import (PROBE_GROUP, QualityCache, ai_target, quality_key, profile_id,
-                        collect_quality, proxy_get, ippure_badge, clean_color, risk_color, flclash_color, location_display)
+                        collect_quality, proxy_get, ippure_badge, clean_color, risk_color, location_display)
 from connection_labels import service_name, connection_name, label_basis, friendly_proc, GENERIC_RENDERERS
 from unknown_log import UnknownTargetLog
 import os
@@ -42,7 +42,6 @@ from monitoring_state import route_evidence, probe_selection, mode_label, latenc
 from status_ui import TypeBadges, mode_rich_text, ElidedLabel
 import ui_theme as theme
 from proxy_clients import CLIENT_LABELS, gui_process_matches
-from flclash_quality import risk_annotation, usable_record, details as flclash_quality_details
 from cleanip_details import risk_display
 from docking import EDGE_GAP, nearest_edge, snap_edge, dock_position
 
@@ -817,6 +816,7 @@ class AiProbeWorker(CancelableNetworkWorker):
         self.url = url
         self.attempts = max(int(attempts), 1)
         self.timeout = max(int(timeout), 1000)
+        if isinstance(pipe, MihomoPipe):self.pipe=pipe.fixed_session()
 
     def run(self):
         """Automatic checks run once; manual latency runs twice and keeps best."""
@@ -827,6 +827,7 @@ class AiProbeWorker(CancelableNetworkWorker):
             try:
                 delay = self.pipe.node_delay(
                     self.node, url=self.url, timeout=self.timeout,
+                    **({'owner':self} if isinstance(self.pipe,MihomoPipe) else {}),
                 )
             except Exception:
                 delay = None
@@ -1932,16 +1933,10 @@ class LightDot(QWidget):
         base = {"off": GRAY, "ok": GREEN, "bad": RED, "warn": YELLOW}[self.state]
         c = QColor(base)
         s = self._s
-        # 平缓呼吸灯：ok 慢速深呼吸（2.4s 周期），bad 急促脉冲，warn 中速，off 静止
-        if self.state == "ok":
+        # All active states share the same clock and waveform; color conveys status.
+        if self.state != "off":
             t = (math.sin(self.phase) + 1) / 2          # 0..1
             glow = 0.25 + 0.75 * t
-        elif self.state == "bad":
-            t = abs(math.sin(self.phase * 2.4))
-            glow = 0.30 + 0.70 * t
-        elif self.state == "warn":
-            t = (math.sin(self.phase * 1.5) + 1) / 2
-            glow = 0.35 + 0.55 * t
         else:
             glow = 0.25
         g = QRadialGradient(s / 2, s / 2, s / 2)
@@ -2424,7 +2419,7 @@ class NetMonitorWidget(QWidget):
         quality_row.addWidget(self.lbl_cleanrisk, 1, 1)
         risk_row = QHBoxLayout()
         risk_row.setSpacing(8)
-        self.lbl_flclash = QLabel('Fl：—')
+        self.lbl_flclash = QLabel('')  # Reserved cell: preserve the existing grid layout.
         self.lbl_flclash.setTextFormat(Qt.RichText)
         self.lbl_flclash.setStyleSheet('color:#FFFFFF;font-size:12.5px;font-weight:700;letter-spacing:0px;')
         quality_row.addWidget(self.lbl_flclash,0,1)
@@ -2700,11 +2695,18 @@ class NetMonitorWidget(QWidget):
             self.engine.pipe, node, url=AI_PROBE_URL, attempts=attempts,
         )
         self.probe_worker.result.connect(lambda ok, ms, key=target: self._probe_done(ok, ms, key))
-        self.probe_worker.finished.connect(self._sync_detection_buttons)
+        self.probe_worker.finished.connect(lambda w=self.probe_worker:self._probe_finished(w))
         self.probe_worker.start()
         self._sync_detection_buttons()
         _lbl_set(self.lbl_latency, "探测中…")
         LOG.info("AI probe started mode=%s group=%s node=%s", d.get("mode"), self._probe_group, node)
+
+    def _probe_finished(self, worker):
+        if self.probe_worker is worker:self.probe_worker=None
+        worker.deleteLater()
+        self._sync_detection_buttons()
+        if not self._shutting_down and proxy_health_key(getattr(self,'_last_data',{})) != getattr(self,'_probe_target',''):
+            self.start_probe()
 
     def _probe_done(self, ok, ms, target_key=None):
         d = getattr(self, "_last_data", {})
@@ -2955,6 +2957,7 @@ class NetMonitorWidget(QWidget):
         for timer in (self.timer, self.anim, self.probe_timer, self.toast_timer):
             timer.stop()
 
+
         for worker in (self.quality_worker, self.route_worker):
             if worker is not None and worker.isRunning():
                 worker.cancel()
@@ -3013,11 +3016,12 @@ class NetMonitorWidget(QWidget):
     def _animate(self):
         if not self.isVisible():
             return
+        phase = time.monotonic() * 3.25
         for d in (self.light_sw, self.light_take, self.light_node,
                   self.mini_v_light, self.mini_h_light):
+            d.phase = phase
             if d.state == "off" or not d.isVisible():
                 continue                       # 熄灭/隐藏的灯不做呼吸动画
-            d.phase += 0.13
             d.update()
 
     # ---------- 节点体检 ----------
@@ -3099,7 +3103,7 @@ class NetMonitorWidget(QWidget):
         elif result.get('errors'):
             LOG.warning('IP quality incomplete errors=%s', result['errors'])
         else:
-            LOG.info('IP quality complete sources=%s', ','.join(k for k in ('ippure','cleanip','flclash') if result.get(k)))
+            LOG.info('IP quality complete sources=%s', ','.join(k for k in ('ippure','cleanip') if result.get(k)))
         if not self._shutting_down:
             self._render_quality(getattr(self, '_last_data', {}))
 
@@ -3116,7 +3120,8 @@ class NetMonitorWidget(QWidget):
             button.setText('检测中…' if busy else text)
             button.setEnabled(not busy)
 
-    def _route_done(self, result, mode, profile):
+    def _route_done(self, result, mode, profile, epoch=None):
+        if epoch is not None and epoch!=getattr(self,'_route_epoch',0):return
         if result.get('route') and not result.get('cancelled') and not self._shutting_down:
             self.engine.pipe.ai_route_hint = dict(result, mode=mode, profile=profile, at=time.monotonic())
 
@@ -3133,7 +3138,7 @@ class NetMonitorWidget(QWidget):
                 port = d.get('main_proxy_port')
                 if port:
                     self.route_worker = IPQualityWorker(self.engine.pipe, port=port, parent=self)
-                    self.route_worker.done.connect(lambda result, m=d['mode'], p=d['profile_id']: self._route_done(result,m,p))
+                    self.route_worker.done.connect(lambda result, m=d['mode'], p=d['profile_id'], e=getattr(self,'_route_epoch',0): self._route_done(result,m,p,e))
                     self.route_worker.finished.connect(lambda w=self.route_worker:self._network_worker_finished('route_worker',w))
                     self.route_worker.start()
         self._start_quality(d)
@@ -3143,19 +3148,14 @@ class NetMonitorWidget(QWidget):
         key = quality_key(d)
         result = self.quality_cache.results.get(key) if key else None
         self.ip_type_badges.render(result or {})
-        flags_detail = risk_annotation(result or {})[1]
+        flags_detail = ''
         clean=(result or {}).get('cleanip') or {}
         flags,clean_detail=risk_display(clean)
         flags_detail+='\n'+clean_detail
         if (result or {}).get('errors',{}).get('cleanip_details'):
             flags_detail+='\n明细读取失败：'+result['errors']['cleanip_details']
-        third=usable_record(result or {})
-        if third:
-            _lbl_set(self.lbl_flclash,f'Fl：<span style="color:{flclash_color(third["level"])}">{html.escape(third["quality_label"])}</span>')
-            if third['flags']:flags+=' · Fl：'+'、'.join(third['flags'])
-        else:_lbl_set(self.lbl_flclash,'Fl：—')
-        self.lbl_flclash.setToolTip(flags_detail)
-        self.lbl_risk_flags.set_full_text('标记：'+flags)
+        from cleanip_details import risk_colored_parts
+        self.lbl_risk_flags.set_colored_parts(risk_colored_parts(clean))
         self.lbl_risk_flags.setToolTip(flags_detail)
         location, location_tip = location_display(result or {})
         self.lbl_location.set_full_text(location)
@@ -3193,7 +3193,6 @@ class NetMonitorWidget(QWidget):
         tip += '本次启动按订阅/节点缓存；切回不会自动重测。手动点击可更新。\nIPPure/风险分越低越好；CleanIP 纯净度越高越好。第三方评分仅供参考。'
         if pure: tip += '\nIPPure 出口 IP：'+pure['ip']
         if clean: tip += '\nCleanIP 出口 IP：'+clean['ip']+'\n完整标记：'+clean['flags']
-        if result.get('flclash'):tip += '\n'+flclash_quality_details(result)
         if result.get('ip_mismatch'):tip += '\n注意：两站观测 IP 不同，不能视为同一个 IP 的综合评分。'
         if d.get('other_ai_exits'):tip += '\n存在其他 AI 出口，此处优先跟随 ChatGPT 实际路径。'
         if pending:tip += '\n正在手动刷新，当前为上次结果。'
@@ -3201,7 +3200,7 @@ class NetMonitorWidget(QWidget):
         if result.get('refresh_errors'):
             tip+='\n最近刷新失败，保留上次成功结果（不是本次新检测值）：'+str(result.get('refresh_time',''))
             for label,error in result['refresh_errors'].items():tip+='\n'+label+'：'+error
-            self.lbl_risk_flags.set_full_text('刷新失败 · 标记：'+flags)
+            self.lbl_risk_flags.set_colored_parts(risk_colored_parts(clean,'刷新失败 · 标记：'))
             self.lbl_risk_flags.setToolTip(tip)
         for label in (self.lbl_ippure,self.lbl_cleanip,self.lbl_cleanrisk):_tip_set(label,tip)
 
@@ -3225,6 +3224,20 @@ class NetMonitorWidget(QWidget):
             label.setVisible(bool(label.text().strip()))
 
     # ---------- 刷新 ----------
+    def _prepare_target_transition(self, d):
+        signature=tuple(d.get(k) for k in ('profile_id','api_generation','mode','ai_target_state','ai_group','ai_node'))
+        if signature==getattr(self,'_target_signature',None):return
+        self._target_signature=signature
+        self._route_epoch=getattr(self,'_route_epoch',0)+1
+        self._route_retry_at=time.monotonic()+0.25
+        self.engine.pipe.ai_route_hint=None
+        self.probe_retry_timer.stop()
+        self.probe_state=None
+        self._probe_retry=0
+        for worker in (self.probe_worker,self.quality_worker,self.route_worker):
+            if worker and worker.isRunning():worker.cancel()
+        LOG.info('AI target transition: obsolete probes cancelled; route cooldown reset')
+
     def refresh(self):
         d = self.sampler.take() if getattr(self, "sampler", None) else self.engine.tick()
         if d is None:
@@ -3243,6 +3256,7 @@ class NetMonitorWidget(QWidget):
             return
         self._last_sample_at = time.monotonic()
         self._last_data = d
+        self._prepare_target_transition(d)
         signature = (d.get("api_on"), d.get("api_generation"), d.get("mode"),
                      d.get("sp_on"), d.get("tun_on"), d.get("ai_group"), d.get("ai_node"))
         if signature != getattr(self, "_logged_state", None):

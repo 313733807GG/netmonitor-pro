@@ -1,22 +1,24 @@
-# NetMonitor Pro 22.0.1
+# NetMonitor Pro 22.0.2
+
+> 22.0.2：已移除Fl质量参考，原单元格留空；仅IPPure与CleanIP参与评分和类型印证。安装及新增订阅必须按[代理商检测入口说明](docs/PROVIDER_SETUP.md)逐份检查。
 
 Windows 桌面网络监控小组件：系统/进程实时流量、Mihomo 连接分流、AI 出口节点、HTTP 延迟与 IP 质量。
 
 > **本版本已在 Clash Verge Rev / Mihomo v1.19.32 和 FlClash 0.9.2 / Mihomo v1.19.33 实机验证。其他 Mihomo 客户端可能适用但需自行适配；非 Mihomo 内核不建议下载使用。** 本项目不是 Clash Verge 官方产品，不附带代理服务、订阅或节点。
 
-[下载 v22.0.1](https://github.com/313733807GG/netmonitor-pro/releases/tag/v22.0.1) · [详细安装](docs/INSTALLATION.md) · [日常使用](docs/USAGE.md) · [后期维护](docs/MAINTENANCE.md) · [交给 AI 安装](docs/AI_INSTALL.md) · [IP 检测入口](docs/CLASH_VERGE_SETUP.md) · [更新记录](CHANGELOG.md)
+[下载 v22.0.2](https://github.com/313733807GG/netmonitor-pro/releases/tag/v22.0.2) · [详细安装](docs/INSTALLATION.md) · [日常使用](docs/USAGE.md) · [后期维护](docs/MAINTENANCE.md) · [交给 AI 安装](docs/AI_INSTALL.md) · [IP 检测入口](docs/CLASH_VERGE_SETUP.md) · [更新记录](CHANGELOG.md)
 
-本版新增 FlClash 基础适配及同 IP 缓存印证、CleanIP 风险命中明细、亮蓝主题和多屏吸附修复。详见[新版变化](docs/V22_CHANGES.md)与[FlClash 设置](docs/FLCLASH_SETUP.md)。
+本版新增 Clash Verge / FlClash 适配与双站 IP 检测、CleanIP 风险命中明细、亮蓝主题和多屏吸附修复。详见[新版变化](docs/V22_CHANGES.md)与[FlClash 设置](docs/FLCLASH_SETUP.md)。
 
 ## 界面
 
-<img src="docs/images/netmonitor-22.0.1.png" width="360" alt="NetMonitor Pro 22.0.1 桌面面板：流量、Clash Verge 状态、IP 质量、地区与连接列表">
+<img src="docs/images/netmonitor-22.0.1.png" width="360" alt="NetMonitor Pro 22.0.2 桌面面板：流量、Clash Verge 状态、IP 质量、地区与连接列表">
 
 展示图由维护者提供，代理商名称已遮挡。节点、地区、分数和软件名称为当时示例，不是默认配置、代理推荐或可保证的检测结果。
 
 ## 下载运行
 
-1. 下载 Release 中的 **NetMonitor-v22.0.1-windows-x64.zip**，核对同页 `SHA256SUMS.txt`；GitHub 自动生成的 Source code 是源码，不含可运行 EXE。
+1. 下载 Release 中的 **NetMonitor-v22.0.2-windows-x64.zip**，核对同页 `SHA256SUMS.txt`；GitHub 自动生成的 Source code 是源码，不含可运行 EXE。
 2. 完整解压到有写入权限的独立目录，保留 `NetMonitor.exe` 和整个 `_internal`，不要只复制 EXE。便携包无需另装 Python。
 3. 启动 Clash Verge Rev 或 FlClash，再启动 `NetMonitor.exe`，按 Windows 提示允许管理员权限，以启用 ETW 精准采集。普通权限下功能可能降级。
 4. 如需 IPPure/CleanIP 评分，先按[检测入口说明](docs/CLASH_VERGE_SETUP.md)合并专用配置；缺少此入口时评分不可用，普通流量监控仍可使用。
@@ -61,7 +63,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -I tools/project_cli.py build
 ```
 
-输出 `dist/NetMonitor`，构建不自动安装或重启程序。源码版与 EXE 不要同时采集同一个 ETW 会话。当前 192 项回归测试；GitHub Actions 在 Windows 上运行。`src/etw` 随附 pywintrace 0.3.0 源码，**不要安装 PyPI 上同名的 `etw` 包**。
+输出 `dist/NetMonitor`，构建不自动安装或重启程序。源码版与 EXE 不要同时采集同一个 ETW 会话。当前 183 项回归测试；GitHub Actions 在 Windows 上运行。`src/etw` 随附 pywintrace 0.3.0 源码，**不要安装 PyPI 上同名的 `etw` 包**。
 
 ## 许可
 

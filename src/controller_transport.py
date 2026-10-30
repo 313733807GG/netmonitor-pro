@@ -165,7 +165,7 @@ class ControllerTransport:
             self.client_id = ""
             self._config_checked = 0
 
-    def _exchange(self, channel, path, timeout, method='GET', payload=None):
+    def _exchange(self, channel, path, timeout, method='GET', payload=None, owner=None):
         if "\r" in path or "\n" in path:
             raise ValueError("invalid request path")
         if method not in ('GET','PUT'):
@@ -179,6 +179,7 @@ class ControllerTransport:
         handle = None
         sock = None
         try:
+            if owner is not None and owner.isInterruptionRequested():raise OSError('cancelled')
             if channel[0] == "pipe":
                 handle = self._k32.CreateFileW(channel[1], 0xC0000000, 0, None, 3, 0, None)
                 if handle in (None, 0, ctypes.c_void_p(-1).value):
@@ -189,8 +190,10 @@ class ControllerTransport:
                     raise OSError("controller write failed")
             else:
                 sock = socket.create_connection(("127.0.0.1", channel[1]), timeout=timeout)
+                if owner is not None:owner.track_socket(sock)
                 sock.sendall(request)
             while time.monotonic() < deadline:
+                if owner is not None and owner.isInterruptionRequested():raise OSError('cancelled')
                 complete = decode_http(bytes(data))
                 if complete is not None:
                     return complete
@@ -225,9 +228,10 @@ class ControllerTransport:
             if handle is not None:
                 self._k32.CloseHandle(handle)
             if sock is not None:
+                if owner is not None:owner.clear_socket(sock)
                 sock.close()
 
-    def get(self, path):
+    def get(self, path, owner=None):
         channel = self._chan
         if channel is None:
             return None
@@ -235,7 +239,7 @@ class ControllerTransport:
         timeout_match = re.search(r"[?&]timeout=(\d+)", path)
         timeout = min(int(timeout_match[1]) / 1000 + 1, 20) if timeout_match else 2
         try:
-            status, raw = self._exchange(channel, path, timeout)
+            status, raw = self._exchange(channel, path, timeout, owner=owner) if owner is not None else self._exchange(channel, path, timeout)
             if status != 200:
                 LOG.warning("controller HTTP %s endpoint=%s", status, "delay" if delay_request else path.split("?")[0])
                 if status in (401, 403):
@@ -248,6 +252,7 @@ class ControllerTransport:
             self.last_error = ""
             return result
         except (OSError, ValueError, TypeError) as exc:
+            if owner is not None and owner.isInterruptionRequested():return None
             self.last_error = f"内核接口读取失败: {type(exc).__name__}"
             LOG.warning("controller request failed endpoint=%s error=%s", "delay" if delay_request else path, type(exc).__name__)
             # A single node timing out must not disconnect the healthy API.

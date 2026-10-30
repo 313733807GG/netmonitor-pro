@@ -1,6 +1,6 @@
 """Logical-pixel docking geometry, independent of resize side effects."""
 EDGE_GAP=8
-SNAP_DISTANCE=4
+SNAP_DISTANCE=2
 
 def nearest_edge(rect,screen,edges=('l','r','t','b')):
     distances={'l':abs(rect.left()-screen.left()),'r':abs(rect.right()-screen.right()),

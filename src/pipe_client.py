@@ -107,9 +107,10 @@ class MihomoPipe(ControllerTransport):
     def proxies(self):
         return self.get("/proxies") or {}
 
-    def node_delay(self, name, url="https://www.gstatic.com/generate_204", timeout=3000):
+    def node_delay(self, name, url="https://www.gstatic.com/generate_204", timeout=3000, owner=None):
         from urllib.parse import quote
-        r = self.get(f"/proxies/{quote(name, safe='')}/delay?url={quote(url, safe='')}&timeout={timeout}")
+        path=f"/proxies/{quote(name, safe='')}/delay?url={quote(url, safe='')}&timeout={timeout}"
+        r = self.get(path,owner=owner) if owner is not None else self.get(path)
         if r and isinstance(r.get("delay"), (int, float)) and not isinstance(r.get("delay"), bool) and r["delay"] >= 0:
             return int(r["delay"])
         return None
