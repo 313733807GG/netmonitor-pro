@@ -87,9 +87,10 @@ class ReviewLogTests(unittest.TestCase):
         self.assertEqual(self.read()[0]['count'],1)
         self.log.flush()
         self.assertEqual(self.read()[0]['count'],2)
-    def test_system_collector_records_before_top20(self):
+    def test_system_collector_skips_plain_ip_before_top20(self):
         import app
         class Engine:
+            _connections_snapshot=app.DataEngine._connections_snapshot
             proxy_listen=set()
             _proc_rates={}
             pid_paths={i:'C:\\Apps\\process.exe' for i in range(1,26)}
@@ -98,13 +99,12 @@ class ReviewLogTests(unittest.TestCase):
             traffic=SimpleNamespace(accurate=False)
             unknown_log=self.log
             def _pid_name(self,pid): return f'p{pid}.exe'
-        sockets=[SimpleNamespace(pid=i,status='ESTABLISHED',laddr=SimpleNamespace(ip='192.168.1.1',port=1000+i),
+        sockets=[SimpleNamespace(type=app.socket.SOCK_STREAM,pid=i,status='ESTABLISHED',laddr=SimpleNamespace(ip='192.168.1.1',port=1000+i),
                  raddr=SimpleNamespace(ip=f'8.8.9.{i}',port=443)) for i in range(1,26)]
-        with patch.object(app.psutil,'net_connections',side_effect=lambda kind:sockets if kind=='tcp' else []):
+        with patch.object(app.psutil,'net_connections',side_effect=lambda kind:sockets if kind=='inet' else []):
             rows=app.DataEngine._system_conns(Engine())
         self.assertEqual(len(rows),20)
-        self.assertEqual(len(self.log.items),25)
-        self.assertEqual(self.read()[0]['kind'],'system')
-        self.assertEqual(self.read()[0]['exit'],'')
+        self.assertEqual(self.log.items,{})
+        self.assertEqual(self.log.counts(),{'domain':0,'ip':0,'anomaly':0})
 
 if __name__=='__main__': unittest.main()

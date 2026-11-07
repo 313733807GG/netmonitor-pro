@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(22, 0, 2, 0),
-    prodvers=(22, 0, 2, 0),
+    filevers=(22, 0, 12, 0),
+    prodvers=(22, 0, 12, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -13,13 +13,13 @@ VSVersionInfo(
     StringFileInfo([
       StringTable(
         '080404b0',
-         [StringStruct('CompanyName', 'NetMonitor Project'),
-         StringStruct('FileDescription', 'NetMonitor Pro'),
-         StringStruct('FileVersion', '22.0.2.0'),
+         [StringStruct('CompanyName', 'NetMonitor'),
+         StringStruct('FileDescription', 'NetMonitor'),
+         StringStruct('FileVersion', '22.0.12.0'),
          StringStruct('InternalName', 'NetMonitor'),
          StringStruct('OriginalFilename', 'NetMonitor.exe'),
-         StringStruct('ProductName', 'NetMonitor Pro'),
-         StringStruct('ProductVersion', '22.0.2.0')])
+         StringStruct('ProductName', 'NetMonitor'),
+         StringStruct('ProductVersion', '22.0.12.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [2052, 1200])])
   ]

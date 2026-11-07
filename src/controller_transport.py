@@ -86,6 +86,8 @@ class ControllerTransport:
         k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                  ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
         k.CreateFileW.restype = wintypes.HANDLE
+        k.WaitNamedPipeW.argtypes = [wintypes.LPCWSTR,wintypes.DWORD]
+        k.WaitNamedPipeW.restype = wintypes.BOOL
         k.CloseHandle.argtypes = [wintypes.HANDLE]
         k.CloseHandle.restype = wintypes.BOOL
         k.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
@@ -183,8 +185,13 @@ class ControllerTransport:
             if channel[0] == "pipe":
                 handle = self._k32.CreateFileW(channel[1], 0xC0000000, 0, None, 3, 0, None)
                 if handle in (None, 0, ctypes.c_void_p(-1).value):
-                    handle = None
-                    raise OSError("controller pipe unavailable")
+                    error=ctypes.get_last_error()
+                    handle=None
+                    if error==231 and self._k32.WaitNamedPipeW(channel[1],200):
+                        handle=self._k32.CreateFileW(channel[1],0xC0000000,0,None,3,0,None)
+                    if handle in (None,0,ctypes.c_void_p(-1).value):
+                        handle=None
+                        raise ctypes.WinError(ctypes.get_last_error() or error)
                 written = wintypes.DWORD()
                 if not self._k32.WriteFile(handle, request, len(request), ctypes.byref(written), None) or written.value != len(request):
                     raise OSError("controller write failed")
@@ -239,7 +246,15 @@ class ControllerTransport:
         timeout_match = re.search(r"[?&]timeout=(\d+)", path)
         timeout = min(int(timeout_match[1]) / 1000 + 1, 20) if timeout_match else 2
         try:
-            status, raw = self._exchange(channel, path, timeout, owner=owner) if owner is not None else self._exchange(channel, path, timeout)
+            try:
+                status, raw = self._exchange(channel, path, timeout, owner=owner) if owner is not None else self._exchange(channel, path, timeout)
+            except OSError:
+                if delay_request or (owner is not None and owner.isInterruptionRequested()):raise
+                # A busy/recycling local pipe is not evidence that the proxy
+                # stopped. Retry once before discarding controller state.
+                time.sleep(.1)
+                if self._chan!=channel: return None
+                status, raw = self._exchange(channel, path, timeout, owner=owner) if owner is not None else self._exchange(channel, path, timeout)
             if status != 200:
                 LOG.warning("controller HTTP %s endpoint=%s", status, "delay" if delay_request else path.split("?")[0])
                 if status in (401, 403):
@@ -254,7 +269,7 @@ class ControllerTransport:
         except (OSError, ValueError, TypeError) as exc:
             if owner is not None and owner.isInterruptionRequested():return None
             self.last_error = f"内核接口读取失败: {type(exc).__name__}"
-            LOG.warning("controller request failed endpoint=%s error=%s", "delay" if delay_request else path, type(exc).__name__)
+            LOG.warning("controller request failed endpoint=%s error=%s detail=%s", "delay" if delay_request else path, type(exc).__name__, str(exc)[:180])
             # A single node timing out must not disconnect the healthy API.
             if not delay_request:
                 self.mark_dead(channel)

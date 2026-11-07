@@ -1,5 +1,7 @@
 """AI-route evidence, per-launch quality cache, and dedicated-loopback probes."""
 import http.client
+import gzip
+import io
 import ipaddress
 import json
 import math
@@ -79,7 +81,10 @@ def quality_key(data):
     if not data.get('api_on') or not (data.get('sp_on') or data.get('tun_on')): return ''
     if data.get('mode')=='direct' or data.get('ai_target_state')!='confirmed': return ''
     node=data.get('ai_node','')
-    return (str(data.get('profile_id','unknown')),node) if node and node.upper()!='DIRECT' else ''
+    if not node or node.upper()=='DIRECT':return ''
+    key=(str(data.get('profile_id','unknown')),node)
+    mode=data.get('quality_mode','auto')
+    return key if mode=='auto' else key+(mode,)
 
 class QualityCache:
     """No disk persistence. A failed attempt is cached too; manual retry is explicit."""
@@ -94,7 +99,8 @@ class QualityCache:
         previous=self.results.get(key,{})
         if (result.get('errors') and not any(result.get(k) for k in ('ippure','cleanip'))
                 and any(previous.get(k) for k in ('ippure','cleanip'))):
-            self.results[key]=dict(previous,refresh_errors=result['errors'],refresh_time=result.get('time',''))
+            self.results[key]=dict(previous,refresh_errors=result['errors'],refresh_time=result.get('time',''),
+                                   protocol_mismatches=result.get('protocol_mismatches',{}))
         else:self.results[key]=result
 
 def score(value):
@@ -119,8 +125,7 @@ def risk_color(value):
 def parse_ippure(body):
     obj=json.loads(body)
     ip=str(ipaddress.ip_address(obj['ip']))
-    if ipaddress.ip_address(ip).version==6:raise ValueError('IPPure 不提供 IPv6 风险系数')
-    result={'ip':ip,'score':score(obj.get('fraudScore'))}
+    result={'ip':ip,'score':None if ipaddress.ip_address(ip).version==6 else score(obj.get('fraudScore'))}
     result['location']={k:str(obj.get(k) or '')[:100] for k in ('country','countryCode','region','city')}
     for source,dest in (('isResidential','residential'),('isBroadcast','broadcast')):
         if isinstance(obj.get(source),bool):result[dest]=obj[source]
@@ -153,43 +158,15 @@ def parse_cleanip(body):
     return result
 
 def location_display(result):
-    """Subnational levels only; never invent a district from a city-level reply."""
-    aliases={'taiwan':'台湾','中国台湾':'台湾','臺灣':'台湾','台湾省':'台湾','hong kong':'香港','中国香港':'香港','macao':'澳门','macau':'澳门','中国澳门':'澳门','taipei':'台北市','台北':'台北市','臺北市':'台北市',
-             'new taipei':'新北市','new taipei city':'新北市','tokyo':'东京','東京都':'东京','los angeles':'洛杉矶','california':'加利福尼亚州'}
-    def norm(value):return aliases.get(value.strip().casefold(),value.strip().casefold())
-    def parts(item):
-        loc=item.get('location') or {};country=norm(loc.get('country',''))
-        values=loc.get('parts') if 'parts' in loc else [loc.get('region',''),loc.get('city','')]
-        regional_country=country in ('台湾','香港','澳门')
-        if regional_country and ('parts' in loc or not loc.get('region')):values=[loc.get('country','')]+values
-        answer=[]
-        for value in values:
-            value=str(value).strip()
-            if norm(value) in ('台湾','香港','澳门'):value=norm(value)
-            if value and (norm(value)!=country or regional_country) and norm(value) not in [norm(x) for x in answer]:answer.append(value)
-        return answer[:2]
-    pure=result.get('ippure') or {};clean=result.get('cleanip') or {}
-    a,b=parts(pure),parts(clean)
-    detail='IPPure：'+(' · '.join(a) or '未提供')+'\nCleanIP：'+(' · '.join(b) or '未提供')
-    if pure.get('ip') and clean.get('ip') and pure['ip']!=clean['ip']:
-        return '出口不一致',detail+'\n两站 IP 不同，不合并地区结论。'
-    if not a and not b:return '地区待确认',detail
-    chosen=b or a
-    suffix=''
-    if a and b:
-        # A missing broader level is incomplete evidence, not a disagreement.
-        if norm(a[-1])!=norm(b[-1]) or (len(a)==len(b)==2 and norm(a[0])!=norm(b[0])):
-            suffix='（分歧）';detail+='\n按约定采用 CleanIP 地址；可能存在数据库/语言口径差异。'
-        else:detail+='\n两站已提供的城市层级一致。'
-    else:detail+='\n单来源结果，尚未双站印证。'
-    if len(chosen)<2:detail+='\n仅提供一级地区，没有补造更细地址。'
-    return ' · '.join(chosen)+suffix,detail
+    from location_names import location_display as render_location
+    return render_location(result)
 
 
 def type_badges(result):
     """Keep source labels; negative evidence wins without inventing IDC from false."""
-    pure=result.get('ippure') or {};clean=result.get('cleanip') or {}
-    if pure.get('ip') and clean.get('ip') and pure['ip']!=clean['ip']:
+    from quality_evidence import type_inputs
+    pure,clean=type_inputs(result)
+    if pure.get('ip') and clean.get('ip') and pure['ip']!=clean['ip'] and not (result.get('route_verified') is True and result.get('node')):
         return [('出口不一致','unknown','两站看到不同 IP，不合并类型结论','待确认')]
     badges=[]
     for field,flag,positive,negative in (('native_type','broadcast','原生 IP','广播 IP'),('ip_type','residential','住宅 IP','非住宅 IP')):
@@ -216,25 +193,63 @@ def type_badges(result):
             label='归属待确认' if flag=='broadcast' else '类型待确认';color='unknown';source='待确认'
         pure_label=negative if p_negative else (positive if p_positive else '未提供')
         detail=f'CleanIP：{original or "未提供"}\nIPPure：{pure_label}'
+        if result.get('node_evidence'):
+            detail+='\n节点已检测出口的类型证据（负面优先）：'
+            for record in result['node_evidence']:
+                item=record['data'];value=item.get(field) if record['source']=='cleanip' else item.get(flag)
+                detail+='\n'+record['source']+' '+item.get('ip','')+'：'+str(value if value is not None else '未提供')
+        if result.get('ip_mismatch'):detail+='\n同节点不同出口汇总：IPPure '+str(pure.get('ip'))+'；CleanIP '+str(clean.get('ip'))
         if conflict:label+=' · 分歧';detail+='\n按约定优先显示非原生/非住宅证据；保留各站原结论。'
         elif not (known and isinstance(p,bool)):detail+='\n尚未获得两站共同印证。'
         badges.append((label,color,detail,source))
     return badges
 
-def connection_for_port(pipe,port,owner=None):
-    for _ in range(3):
+def connection_for_port(pipe,port,owner=None,attempts=3):
+    for _ in range(attempts):
         if owner is not None and owner.isInterruptionRequested():raise OSError('检测已取消')
         for c in pipe.connections().get('connections',[]):
             if str((c.get('metadata') or {}).get('sourcePort'))==str(port):return c
         time.sleep(.15)
     return None
 
-def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False,max_bytes=262144):
+class FixedTargetHTTPS(http.client.HTTPSConnection):
+    """CONNECT a literal destination while validating TLS against the service name."""
+    def __init__(self,port,host,target):
+        super().__init__('127.0.0.1',port,timeout=10,context=ssl.create_default_context(),source_address=('127.0.0.2',0))
+        self.service_host=host
+        self.set_tunnel(target,443,headers={'Host':('['+target+']' if ':' in target else target)+':443'})
+    def connect(self):
+        http.client.HTTPConnection.connect(self)
+        self.sock=self._context.wrap_socket(self.sock,server_hostname=self.service_host)
+
+def resolve_target(pipe,host,family):
+    qtype='A' if family==4 else 'AAAA'
+    data=pipe.get('/dns/query?name='+host+'&type='+qtype) or {}
+    for answer in data.get('Answer',[])[:32]:
+        if answer.get('type')!=(1 if family==4 else 28):continue
+        try:address=ipaddress.ip_address(answer.get('data',''))
+        except ValueError:continue
+        if address.version==family and address.is_global and not address.is_multicast:
+            return str(address)
+    raise ValueError('检测站没有可核实的公网 IPv'+str(family)+' 地址，未换协议')
+
+def retry_ipv4_allowed(exc):
+    if isinstance(exc,(json.JSONDecodeError,ssl.SSLCertVerificationError)):return False
+    message=str(exc).lower()
+    if any(x in message for x in ('403','429','401','验证','未允许','出口未能核实','取消')):return False
+    return isinstance(exc,(OSError,ValueError,KeyError,TypeError))
+
+def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False,max_bytes=262144,family=None):
     """Never follow redirects or fall back to direct access. Check real chain."""
-    allowed={'my.ippure.com','cleanip.io','chatgpt.com'}
+    allowed={'my.ippure.com','cleanip.io','chatgpt.com','ipv4.icanhazip.com','ipv6.icanhazip.com'}
     if host not in allowed:raise ValueError('未允许的检测地址')
-    conn=http.client.HTTPSConnection('127.0.0.1',port,timeout=10,context=ssl.create_default_context())
-    conn.set_tunnel(host,443)
+    if family in (4,6):conn=FixedTargetHTTPS(port,host,resolve_target(pipe,host,family))
+    elif node is None and host=='chatgpt.com':
+        conn=http.client.HTTPConnection('127.0.0.1',port,timeout=8)
+        conn.set_tunnel(host,443)
+    else:
+        conn=http.client.HTTPSConnection('127.0.0.1',port,timeout=10,context=ssl.create_default_context())
+        conn.set_tunnel(host,443)
     if owner is not None:owner.connection=conn
     try:
         conn.connect()
@@ -242,13 +257,24 @@ def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False,max_bytes=2621
             owner.track_socket(conn.sock)
             if hasattr(owner,'register_port'):owner.register_port(conn.sock.getsockname()[1],host)
         if owner is not None and owner.isInterruptionRequested():raise OSError('检测已取消')
-        route=connection_for_port(pipe,conn.sock.getsockname()[1],owner)
+        confirming=node is None and host=='chatgpt.com'
+        if confirming:
+            # Send only a standard TLS ClientHello so lazy/sniffing proxy
+            # paths can establish their route. Do not wait for remote TLS,
+            # certificates, or an HTTP response to confirm the connection.
+            incoming,outgoing=ssl.MemoryBIO(),ssl.MemoryBIO()
+            handshake=ssl.create_default_context().wrap_bio(incoming,outgoing,server_hostname=host)
+            try:handshake.do_handshake()
+            except ssl.SSLWantReadError:pass
+            conn.sock.sendall(outgoing.read())
+        route=connection_for_port(pipe,conn.sock.getsockname()[1],owner,attempts=10 if confirming else 3)
         if owner is not None and owner.isInterruptionRequested():raise OSError('检测已取消')
         if node:
             chains=(route or {}).get('chains',[])
             if not chains or chains[0]!=node or PROBE_GROUP not in chains:
                 raise ValueError('检测出口未能核实，未采集评分')
-        conn.request('GET',path,headers={'Host':host,'Accept':'application/json, text/plain, text/html','Accept-Encoding':'identity','User-Agent':'NetMonitor/22 IP-quality','Connection':'close'})
+        if node is None and host=='chatgpt.com':return b'',route
+        conn.request('GET',path,headers={'Host':host,'Accept':'application/json, text/plain, text/html','Accept-Encoding':('gzip' if max_bytes>262144 else 'identity'),'User-Agent':'NetMonitor/22 IP-quality','Connection':'close'})
         response=conn.getresponse()
         if node is None and host=='chatgpt.com':
             return b'',route  # even a 403 confirms the connection's real route
@@ -262,13 +288,14 @@ def proxy_get(pipe,host,path,port,node=None,owner=None,hold=False,max_bytes=2621
             if not chunk:break
             chunks.append(chunk);size+=len(chunk)
             if size>max_bytes:raise ValueError('检测响应过大')
-        return b''.join(chunks),route
+        return decode_response(b''.join(chunks),response.getheader('Content-Encoding',''),max_bytes),route
     finally:
         conn.close()
         if owner is not None:owner.connection=None
 
-def collect_quality(pipe,node,owner=None):
-    result={'node':node,'time':time.strftime('%Y-%m-%d %H:%M:%S'),'errors':{}}
+def collect_quality(pipe,node,owner=None,family=None):
+    result={'node':node,'route_verified':True,'mode':str(family) if family else 'auto','observed_ips':[],'observations':[],
+            'time':time.strftime('%Y-%m-%d %H:%M:%S'),'errors':{}}
     if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
     snapshot=pipe.proxies()
     group=snapshot.get('proxies',{}).get(PROBE_GROUP,{})
@@ -281,16 +308,39 @@ def collect_quality(pipe,node,owner=None):
             try:
                 if pipe.configs().get('mode') not in ('rule','global'):
                     return dict(result,cancelled=True)
-                body,_=proxy_get(pipe,host,path,PROBE_PORT,node,owner)
-                result[label]=parser(body)
-            except Exception as exc:result['errors'][label]=str(exc)[:180]
+                body,_=proxy_get(pipe,host,path,PROBE_PORT,node,owner,**({'family':family} if family else {}))
+                parsed=parser(body)
+                # A verified node's other-family answer is real risk evidence,
+                # but never a successful result for the requested family.
+                result['observed_ips'].append(parsed['ip'])
+                result['observations'].append({'source':label,'data':parsed})
+                require_family(result,label,parsed,family)
+                result[label]=parsed
+                if label=='ippure' and parsed.get('score') is None and family is None:
+                    raise ValueError('IPv6不提供IPPure系数')
+            except Exception as exc:
+                result['errors'][label]=str(exc)[:180]
+                if label=='ippure' and family is None and retry_ipv4_allowed(exc):
+                    if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
+                    if pipe.configs().get('mode') not in ('rule','global'):return dict(result,cancelled=True)
+                    result['ippure_retry']='IPv4补测一次'
+                    try:
+                        body,_=proxy_get(pipe,host,path,PROBE_PORT,node,owner,family=4)
+                        parsed=parser(body)
+                        result['observed_ips'].append(parsed['ip'])
+                        result['observations'].append({'source':label,'data':parsed})
+                        require_family(result,label,parsed,4)
+                        result['ippure']=parsed
+                        result['errors'].pop(label,None)
+                    except Exception as retry_exc:result['errors'][label]+='；IPv4补测：'+str(retry_exc)[:120]
         if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
-        if result.get('cleanip'):
+        clean_observation=next((x['data'] for x in reversed(result['observations']) if x['source']=='cleanip'),None)
+        if clean_observation:
             try:
                 if pipe.configs().get('mode') not in ('rule','global'):return dict(result,cancelled=True)
-                ip=result['cleanip']['ip']
+                ip=clean_observation['ip']
                 body,_=proxy_get(pipe,'cleanip.io','/'+ip,PROBE_PORT,node,owner,max_bytes=2*1024*1024)
-                result['cleanip']['risk_details']=parse_report(body,ip)
+                clean_observation['risk_details']=parse_report(body,ip)
             except Exception as exc:result['errors']['cleanip_details']=str(exc)[:180]
         if owner is not None and owner.isInterruptionRequested():return dict(result,cancelled=True)
         if result.get('ippure') and result.get('cleanip'):
@@ -300,3 +350,45 @@ def collect_quality(pipe,node,owner=None):
         # Only our dedicated selector; never restore/change ordinary groups.
         if not pipe.select_probe_node('REJECT'):
             logging.getLogger('netmonitor').warning('IP quality cleanup failed: dedicated selector could not return to REJECT')
+
+
+def require_family(result,source,item,family):
+    actual=ipaddress.ip_address(item['ip']).version
+    if family and actual!=family:
+        result.setdefault('protocol_mismatches',{})[source]={'requested':family,'actual':actual,'ip':item['ip']}
+        raise ValueError(f'指定IPv{family}，网站识别IPv{actual}；未取得IPv{family}专项结果（实际IP {item["ip"]}）')
+
+
+def quality_feedback(result):
+    mode=result.get('mode','auto')
+    title=('自动' if mode=='auto' else 'IPv'+mode)+'检测'
+    if result.get('cancelled'):return title+'已取消，未更新结果'
+    errors=result.get('errors') or {}
+    valid=sum(bool(result.get(site)) and site not in errors for site in ('ippure','cleanip'))
+    status='完成' if not errors else ('部分完成' if valid else '未完成')
+    lines=[title+status]
+    if errors.get('request'):return '\n'.join(lines+[errors['request']])
+    for site,name in (('ippure','IPPure'),('cleanip','CleanIP')):
+        mismatch=(result.get('protocol_mismatches') or {}).get(site)
+        if mismatch:
+            text=f'未取得IPv{mismatch["requested"]}（返回IPv{mismatch["actual"]}）'
+        elif site in errors:text='失败，悬停查看原因'
+        elif result.get(site):
+            text='IPv6不提供分数' if site=='ippure' and result[site].get('score') is None else '完成'
+        else:text='未取得结果'
+        lines.append(name+'：'+text)
+    if errors.get('cleanip_details'):lines.append('风险明细未完成，不能据此认定未检出')
+    elif not errors:
+        if result.get('reused') and not result.get('queried'):lines.append('已复用成功结果；没有重复请求评分网站')
+        elif result.get('reused'):lines.append('已补查缺项，其余复用成功结果')
+        else:lines.append('数值相同也已重新查询；检测时间已更新')
+    if (result.get('discovery') or {}).get('errors'):lines.append('部分协议地址暂未取得，不判定为单IP节点')
+    return '\n'.join(lines)
+
+
+def decode_response(body,encoding,max_bytes):
+    if encoding.lower()=='gzip':
+        with gzip.GzipFile(fileobj=io.BytesIO(body)) as stream:body=stream.read(max_bytes+1)
+    elif encoding and encoding.lower()!='identity':raise ValueError('检测接口返回不支持的压缩类型')
+    if len(body)>max_bytes:raise ValueError('检测响应过大')
+    return body

@@ -16,9 +16,12 @@ a = Analysis(
     binaries=[],
     datas=[
         ('LICENSE', '.'),
+        ('assets/netmonitor.ico', 'assets'),
         ('../README.md', '.'),
         ('../CHANGELOG.md', '.'),
         ('../docs', 'docs'),
+        ('../examples', 'examples'),
+        ('../tools/Initialize-NetMonitorDefaults.ps1', 'tools'),
         ('../THIRD_PARTY_NOTICES.md', '.'),
         ('../THIRD_PARTY_LICENSES', 'THIRD_PARTY_LICENSES'),
     ],
@@ -26,7 +29,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['websocket'],
     noarchive=False,
     optimize=0,
 )
@@ -110,6 +113,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     version='version_info.txt',
+    icon='assets/netmonitor.ico',
 )
 coll = COLLECT(
     exe,

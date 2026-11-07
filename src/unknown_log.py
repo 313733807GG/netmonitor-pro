@@ -1,4 +1,4 @@
-"""Bounded review evidence. Counts are polling observations, not visits/bytes."""
+"""Bounded review evidence. Plain IPs are omitted; counts are poll observations."""
 import ipaddress
 import json
 import logging
@@ -78,11 +78,29 @@ class UnknownTargetLog:
             self.last_error = str(exc)
             LOG.warning('unknown target log load failed: %s', exc)
 
-    def _prune(self):
-        for host, rec in list(self.items.items()):
-            if not rec.get('anomalies') and not host.startswith('process:') and not cl.needs_review({'host':host}, self.legacy):
-                del self.items[host]
-                self.dirty = True
+    def _keep_record(self, host, rec):
+        if rec.get('anomalies') or host.startswith('process:'):
+            return True
+        if review_category(host, rec) == 'ip':
+            for context in rec.get('contexts') or []:
+                if not isinstance(context, dict):
+                    continue
+                row = dict(context)
+                row.setdefault('host', host)
+                if cl.ip_candidate(row):
+                    return True
+            return False
+        return cl.needs_review({'host':host}, self.legacy)
+
+    def _prune(self, full=True):
+        now=time.monotonic()
+        revision=(cl.rules_revision(),tuple(self.legacy))
+        if full or revision!=getattr(self,'_review_revision',None) or now-getattr(self,'_review_at',0)>=60:
+            for host, rec in list(self.items.items()):
+                if not self._keep_record(host, rec):
+                    del self.items[host]
+                    self.dirty = True
+            self._review_revision=revision;self._review_at=now
         pools = {'domain':[], 'ip':[], 'anomaly':[]}
         for host, rec in self.items.items():
             category = review_category(host, rec)
@@ -110,7 +128,10 @@ class UnknownTargetLog:
             for row in rows:
                 raw = str(row.get('raw_host') or row.get('host') or '')
                 anomalies = cl.review_anomalies(row)
-                if not anomalies and (not raw or _is_private_ip(raw) or not cl.needs_review(row,self.legacy)):
+                if not anomalies and (
+                        not raw or _is_private_ip(raw)
+                        or (review_category(raw, {}) == 'ip' and not cl.ip_candidate(row))
+                        or not cl.needs_review(row,self.legacy)):
                     continue
                 host = raw or 'process:' + str(row.get('proc') or '?')
                 rec = self.items.setdefault(host,{'host':host,'first':iso,'count':0})
@@ -143,7 +164,7 @@ class UnknownTargetLog:
                 for key in ('name','proc','rule','group','source','exit','pid','process_path','kind'):
                     rec[key] = context[key]
                 self.dirty = True
-            self._prune()
+            self._prune(full=False)
             now = time.monotonic()
             if self.dirty and (self.last_attempt is None or now-self.last_attempt>=FLUSH_INTERVAL):
                 self._flush()

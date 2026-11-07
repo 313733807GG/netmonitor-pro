@@ -165,6 +165,8 @@ class TrafficHistoryStore:
     """Background SQLite writer for minute/hour attribution and anomaly events."""
 
     SCHEMA_VERSION = 2
+    WRITE_INTERVAL = 10.0
+    MAX_PENDING_RECORDS = 10000
 
     def __init__(
         self,
@@ -172,6 +174,7 @@ class TrafficHistoryStore:
         minute_retention_days=DEFAULT_MINUTE_RETENTION_DAYS,
         summary_retention_days=DEFAULT_SUMMARY_RETENTION_DAYS,
         anomaly_mib=DEFAULT_ANOMALY_MIB,
+        write_interval=WRITE_INTERVAL,
     ):
         directory = default_history_directory() if db_path is None else os.path.dirname(os.path.abspath(db_path))
         self.directory = directory
@@ -179,12 +182,15 @@ class TrafficHistoryStore:
         self.minute_retention_days = max(int(minute_retention_days), 1)
         self.summary_retention_days = max(int(summary_retention_days), self.minute_retention_days)
         self.anomaly_bytes = max(float(anomaly_mib), 1.0) * (1 << 20)
+        self.write_interval = max(float(write_interval), 0.01)
         self.status = "starting"
         self.last_error = ""
         self.dropped_batches = 0
         self._items = queue.Queue(maxsize=512)
         self._ready = threading.Event()
+        self._state_lock = threading.Lock()
         self._closed = False
+        self._paused = False
         self._thread = threading.Thread(
             target=self._writer_main,
             name="NetMonitorTrafficHistory",
@@ -200,9 +206,14 @@ class TrafficHistoryStore:
     def running(self):
         return self.status == "running" and not self._closed
 
+    @property
+    def paused(self):
+        return self._paused
+
     def record(self, samples, observed_at=None):
-        if self._closed or self.status == "error" or not samples:
-            return False
+        with self._state_lock:
+            if self._closed or self._paused or self.status == "error" or not samples:
+                return False
         stamp = observed_at if observed_at is not None else time.time()
         normalized = []
         try:
@@ -213,15 +224,38 @@ class TrafficHistoryStore:
         except Exception as exc:
             self.last_error = f"样本格式错误: {exc}"
             return False
-        if not normalized:
+        with self._state_lock:
+            if self._closed or self._paused or self.status == "error":
+                return False
+            if not normalized:
+                return True
+            try:
+                self._items.put_nowait(("records", normalized))
+                return True
+            except queue.Full:
+                self.dropped_batches += 1
+                self.last_error = "写入队列已满，已丢弃一个采样批次"
+                return False
+
+    def pause(self, timeout=5.0):
+        with self._state_lock:
+            if self._closed or self.status == "error":
+                return False
+            if self._paused:
+                return True
+            self._paused = True
+        if self.flush(timeout):
             return True
-        try:
-            self._items.put_nowait(("records", normalized))
+        with self._state_lock:
+            self.last_error = "已停止新入账，但暂停前队列未能全部确认落盘"
+        return False
+
+    def resume(self):
+        with self._state_lock:
+            if self._closed or self.status == "error":
+                return False
+            self._paused = False
             return True
-        except queue.Full:
-            self.dropped_batches += 1
-            self.last_error = "写入队列已满，已丢弃一个采样批次"
-            return False
 
     def flush(self, timeout=5.0):
         if self._closed or self.status == "error":
@@ -349,17 +383,39 @@ class TrafficHistoryStore:
             self._cleanup(conn)
             self.status = "running"
             self._ready.set()
+            pending = []
+            write_after = None
+
+            def write_pending():
+                nonlocal pending, write_after
+                if pending:
+                    self._write_records(conn, pending)
+                    pending = []
+                write_after = None
+
             while True:
-                action, payload = self._items.get()
+                timeout = None if write_after is None else max(0.0, write_after - time.monotonic())
+                try:
+                    action, payload = self._items.get(timeout=timeout)
+                except queue.Empty:
+                    write_pending()
+                    continue
                 try:
                     if action == "stop":
+                        write_pending()
                         break
                     if action == "flush":
+                        write_pending()
                         conn.commit()
                         payload.set()
                         continue
                     if action == "records":
-                        self._write_records(conn, payload)
+                        pending.extend(payload)
+                        if write_after is None:
+                            write_after = time.monotonic() + self.write_interval
+                        if (len(pending) >= self.MAX_PENDING_RECORDS
+                                or time.monotonic() >= write_after):
+                            write_pending()
                 finally:
                     self._items.task_done()
         except Exception as exc:

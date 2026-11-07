@@ -28,7 +28,7 @@ class FlClashTests(unittest.TestCase):
         self.addCleanup(self.env.stop)
         self.addCleanup(self.processes.stop)
 
-    def prefs(self, controller='127.0.0.1:9090', secret='fl-secret', profile=371660746716614656, nested_string=True):
+    def prefs(self, controller='127.0.0.1:9090', secret='fl-secret', profile=1001, nested_string=True):
         config = {'currentProfileId':profile,'patchClashConfig':{'external-controller':controller,'secret':secret}}
         outer = {'flutter.config':json.dumps(config) if nested_string else config}
         (self.fl/'shared_preferences.json').write_text(json.dumps(outer),encoding='utf-8-sig')
@@ -71,15 +71,15 @@ class FlClashTests(unittest.TestCase):
 
     def test_profile_namespace_and_subscription_changes(self):
         channel = ('tcp',9090,'fl-secret')
-        self.prefs(profile=371660746716614656)
-        (self.verge/'profiles.yaml').write_text('current: "371660746716614656"\n')
+        self.prefs(profile=1001)
+        (self.verge/'profiles.yaml').write_text('current: "1001"\n')
         a=profile_id(channel)
         b=profile_id(('pipe',PIPE_PREFIX+'verge-mihomo-test','verge-secret'))
-        self.assertEqual(a,'flclash:371660746716614656')
-        self.assertEqual(b,'verge:371660746716614656')
+        self.assertEqual(a,'flclash:1001')
+        self.assertEqual(b,'verge:1001')
         data=dict(api_on=True,sp_on=True,tun_on=False,mode='rule',ai_target_state='confirmed',ai_node='same-node')
         self.assertNotEqual(quality_key(dict(data,profile_id=a)),quality_key(dict(data,profile_id=b)))
-        self.prefs(profile=371660857257496576)
+        self.prefs(profile=1002)
         self.assertNotEqual(profile_id(channel),a)
 
     def test_unknown_client_does_not_use_verge_profile_or_secret(self):

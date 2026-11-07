@@ -28,6 +28,13 @@ def draw_type_icon(p,kind,color):
         p.drawLine(12,12,12,21);p.drawLine(8,21,16,21);p.setBrush(c)
         path.addEllipse(QRectF(10,9,4,4))
     elif kind=='mobile':path.addRoundedRect(QRectF(6,2,12,21),3,3)
+    elif kind=='unknown_origin':
+        path.moveTo(12,2);path.cubicTo(8,4,5,5,3,5);path.lineTo(3,11)
+        path.cubicTo(3,17,8,21,12,23);path.cubicTo(16,21,21,17,21,11)
+        path.lineTo(21,5);path.cubicTo(18,5,15,4,12,2);path.closeSubpath()
+    elif kind=='unknown_type':
+        path.moveTo(2,11);path.lineTo(12,3);path.lineTo(22,11);path.lineTo(19,11)
+        path.lineTo(19,21);path.lineTo(5,21);path.lineTo(5,11);path.closeSubpath()
     elif kind=='unknown':path.addRoundedRect(QRectF(3,3,18,18),5,5)
     else:
         path.addRoundedRect(QRectF(3,3,18,8),2,2);path.addRoundedRect(QRectF(3,14,18,8),2,2)
@@ -37,7 +44,12 @@ def draw_type_icon(p,kind,color):
     if kind=='native':p.drawLine(7,12,11,16);p.drawLine(11,16,17,9)
     elif kind=='home':p.drawRoundedRect(QRectF(10,14,5,7),1,1)
     elif kind=='mobile':p.drawLine(10,18,14,18)
-    elif kind=='unknown':p.drawLine(9,9,15,9);p.drawLine(15,9,12,12);p.drawPoint(12,17)
+    elif kind=='unknown_origin':p.drawLine(8,12,16,12)
+    elif kind=='unknown_type':p.drawLine(8,14,16,14)
+    elif kind=='unknown':
+        question=QPainterPath();question.moveTo(8,8);question.cubicTo(8,3,17,3,17,8)
+        question.cubicTo(17,11,12,11,12,14)
+        p.drawPath(question);p.drawEllipse(QRectF(11.4,17,1.2,1.2))
     elif kind=='server':
         for y in (7,18):p.drawPoint(7,y);p.drawLine(12,y,17,y)
     p.restore()
@@ -91,9 +103,11 @@ class ElidedLabel(QLabel):
         super().__init__(parent);self.full_text='';self._colored_parts=None;self.setTextFormat(Qt.PlainText)
         self.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Fixed);self.setFixedHeight(20)
     def set_full_text(self,text):
+        if self._colored_parts is None and self.full_text==str(text):return
         self._colored_parts=None;self.setTextFormat(Qt.PlainText)
         self.full_text=str(text);self._update_text()
     def set_colored_parts(self,parts):
+        if self._colored_parts==parts:return
         self._colored_parts=parts;self.full_text=''.join(text for text,color in parts)
         self.setTextFormat(Qt.RichText);self._update_text()
     def _update_text(self):
@@ -141,7 +155,9 @@ class TypeBadges(QFrame):
             if source=='IPPure':bg=('#186638' if tone=='positive' else '#A12D3C') if tone!='unknown' else bg;fg='#FFFFFF'
             if source=='FlClash':bg='#593741' if tone=='negative' else '#414B5A'
             kind='native' if '原生' in text and '非原生' not in text else ('broadcast' if '广播' in text or '非原生' in text else ('home' if text.startswith('住宅') else ('mobile' if '移动' in text else 'server')))
-            if tone=='unknown':kind='unknown'
+            if tone=='unknown':
+                kind=('unknown_origin' if text=='归属待确认' else
+                      ('unknown_type' if text=='类型待确认' else 'unknown'))
             badge=BadgeLabel(text,icon_path(kind,fg))
             badge.setTextFormat(Qt.RichText)
             badge.setFixedHeight(28)

@@ -25,9 +25,18 @@ def controls_css():
         QPushButton:pressed {{ background:{PRESSED};border-color:#9BAAC0; }}
         QPushButton:disabled {{ background:#454F5D;color:#C2CCD8;border-color:#647084; }}
         QComboBox {{ background:{BUTTON};color:{TEXT};border:1px solid transparent;
-          border-radius:6px;padding:2px 4px;font-size:11.5px; }}
+          border-radius:6px;padding:2px 5px;font-size:12.5px; }}
         QComboBox:hover {{ background:{HOVER};border-color:#8796A9; }}
         QComboBox:on {{ background:{PRESSED};border-color:#9BAAC0; }}
+        QComboBox:disabled {{ background:#454F5D;color:#C2CCD8;border-color:#647084; }}
+        QComboBox::drop-down {{ border:0;background:transparent;width:20px;
+          subcontrol-origin:padding;subcontrol-position:top right; }}
         QComboBox QAbstractItemView {{ background:{SURFACE};color:{TEXT};
-          selection-background-color:{HOVER};selection-color:{TEXT}; }}
+          border:1px solid #647084;border-radius:6px;padding:4px;outline:0;
+          font-size:11.5px;selection-background-color:{HOVER};selection-color:{TEXT}; }}
+        QComboBox QAbstractItemView::item {{ padding:5px 7px;
+          border-left:3px solid transparent; }}
+        QComboBox QAbstractItemView::item:hover {{ background:{HOVER};color:{TEXT}; }}
+        QComboBox QAbstractItemView::item:selected {{ background:{HOVER};color:{TEXT};
+          border-left:3px solid #DCE6F2; }}
     '''

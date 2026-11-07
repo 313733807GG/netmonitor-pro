@@ -5,7 +5,7 @@ NetMonitor Pro v22 —— AI 节点定向探测与代理感知桌面监控小组
 """
 import sys
 from ip_quality import (PROBE_GROUP, QualityCache, ai_target, quality_key, profile_id,
-                        collect_quality, proxy_get, ippure_badge, clean_color, risk_color, location_display)
+                        proxy_get, ippure_badge, clean_color, risk_color, location_display)
 from connection_labels import service_name, connection_name, label_basis, friendly_proc, GENERIC_RENDERERS
 from unknown_log import UnknownTargetLog
 import os
@@ -26,7 +26,7 @@ import re
 import ssl
 import threading
 import ipaddress
-from PySide6.QtCore import Qt, QTimer, QPoint, QSettings, QThread, Signal, QPropertyAnimation, QEasingCurve, Property, qInstallMessageHandler, QEvent
+from PySide6.QtCore import Qt, QTimer, QPoint, QSize, QSettings, QThread, Signal, QPropertyAnimation, QEasingCurve, Property, qInstallMessageHandler, QEvent
 from PySide6.QtGui import QPainter, QColor, QPen, QFont, QAction, QIcon, QPixmap, QPainterPath, QBrush, QRadialGradient, QCursor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -38,11 +38,18 @@ from pipe_client import MihomoPipe, _ai_group_rank
 from traffic_capture import ProcessTrafficMonitor, is_user_admin
 from traffic_history import TrafficHistoryStore, parse_traffic_multiplier
 from diagnostics import LOG, setup_logging, display_text
-from monitoring_state import route_evidence, probe_selection, mode_label, latency_style, strict_route_state
+from monitoring_state import (route_evidence, probe_selection, mode_label, latency_style,
+                              strict_route_state, proxy_switch_state)
 from status_ui import TypeBadges, mode_rich_text, ElidedLabel
 import ui_theme as theme
+from title_controls import title_icon, history_button_css, PIN_BUTTON_CSS, CLOSE_BUTTON_CSS
+from dropdown_controls import ArrowComboBox, FixedLabelComboBox
 from proxy_clients import CLIENT_LABELS, gui_process_matches
+from proxy_runtime import flclash_runtime
 from cleanip_details import risk_display
+from ip_quality import quality_feedback
+from address_quality import collect_quality
+from quality_retry import QualityRetry
 from docking import EDGE_GAP, nearest_edge, snap_edge, dock_position
 
 # ----------------------------- 工具 -----------------------------
@@ -558,9 +565,12 @@ def find_existing_netmonitor_window(user32=None):
     def callback(hwnd, _):
         buf = ctypes.create_unicode_buffer(256)
         user32.GetWindowTextW(hwnd, buf, len(buf))
-        if buf.value.startswith("NetMonitor Pro"):
-            handles.append(hwnd)
-            return False
+        if re.fullmatch(r"NetMonitor(?: Pro)?(?: v?\d+(?:\.\d+)*)?", buf.value):
+            window_class = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(hwnd, window_class, len(window_class))
+            if re.fullmatch(r"Qt\d+QWindow[A-Za-z]*", window_class.value):
+                handles.append(hwnd)
+                return False
         return True
 
     callback_ref = callback_type(callback)
@@ -743,10 +753,12 @@ class CancelableNetworkWorker(QThread):
 class IPQualityWorker(CancelableNetworkWorker):
     done = Signal(object)
 
-    def __init__(self, pipe, node='', port=0, parent=None):
+    def __init__(self, pipe, node='', port=0, parent=None, family=None, cache=None, force=False):
         super().__init__(parent)
         self.pipe = pipe.fixed_session() if isinstance(pipe, MihomoPipe) else pipe
         self.node, self.port = node, port
+        self.family=family
+        self.query_cache=cache;self.force_query=force
         self.connection = None
 
     def cancel(self):
@@ -760,7 +772,7 @@ class IPQualityWorker(CancelableNetworkWorker):
     def run(self):
         try:
             if self.node:
-                result = collect_quality(self.pipe, self.node, self)
+                result = collect_quality(self.pipe, self.node, self, family=self.family, cache=self.query_cache, force=self.force_query)
             else:
                 _, route = proxy_get(self.pipe, 'chatgpt.com', '/cdn-cgi/trace', self.port, owner=self)
                 result = {'route': route}
@@ -1149,7 +1161,7 @@ class DataEngine:
         self._tun_last = None      # (网卡名, sent, recv) TUN 网卡计数上次采样
         self._ptr_cache = {}       # IP → 反向解析主机名（"" = 无记录）
         self._ptr_pending = set()  # 正在后台解析的 IP
-        # 未识别目标自动登记（域名/裸IP 认不出 → unknown-targets.json，供统一鉴定）
+        # 登记未知域名、证据化IP候选和异常；普通裸IP不占用待鉴定配额
         self.unknown_log = UnknownTargetLog(legacy=FRIENDLY_HOSTS)
         self._ai_previous = None
         self._ai_profile = ''
@@ -1245,6 +1257,12 @@ class DataEngine:
         except OSError:
             return False, ""
 
+    def _connections_snapshot(self):
+        if not getattr(self, '_in_tick', False):return psutil.net_connections('inet')
+        if getattr(self, '_tick_connections', None) is None:
+            self._tick_connections=tuple(psutil.net_connections('inet'))
+        return self._tick_connections
+
     def _scan_ports(self):
         now = time.time()
         if now - self.last_port_scan < 2:
@@ -1254,7 +1272,7 @@ class DataEngine:
         listen_pids = collections.defaultdict(set)
         port_pids = collections.defaultdict(set)
         try:
-            for c in psutil.net_connections("inet"):
+            for c in self._connections_snapshot():
                 if c.laddr and c.pid:
                     endpoint_pids[(address_key(c.laddr.ip), c.laddr.port)].add(c.pid)
                     port_pids[c.laddr.port].add(c.pid)
@@ -1272,22 +1290,35 @@ class DataEngine:
             all_pids.update(pids)
         for pids in port_pids.values():
             all_pids.update(pids)
+        old_metadata=getattr(self,'_metadata_cache',{})
+        new_metadata={}
         for pid in all_pids:
             try:
                 process = psutil.Process(pid)
+                try:born=process.create_time()
+                except Exception:born=0.0
+                cached=old_metadata.get(pid)
+                if born and cached and cached[0]==born and now-cached[3]<60:
+                    start_times[pid],names[pid],paths[pid]=cached[:3]
+                    new_metadata[pid]=cached
+                    continue
                 names[pid] = process.name()
                 try:
                     paths[pid] = process.exe()
                 except Exception:
                     paths[pid] = ""
                 try:
-                    start_times[pid] = process.create_time()
+                    start_times[pid] = born
                 except Exception:
                     start_times[pid] = 0.0
             except Exception:
                 names[pid] = "?"
                 paths[pid] = ""
                 start_times[pid] = 0.0
+        for pid in all_pids:
+            if pid not in new_metadata and start_times.get(pid) and paths.get(pid):
+                new_metadata[pid]=(start_times[pid],names[pid],paths[pid],now)
+        self._metadata_cache=new_metadata
         self.pid_names = names
         self.pid_paths = paths
         self.pid_start_times = start_times
@@ -1442,7 +1473,7 @@ class DataEngine:
             "proxy_n": 0, "direct_n": 0, "source_ports": set(),
         })
         try:
-            for c in psutil.net_connections("tcp"):
+            for c in (c for c in self._connections_snapshot() if c.type==socket.SOCK_STREAM):
                 if c.status != "ESTABLISHED" or not c.raddr or not c.pid:
                     continue
                 ip = c.raddr.ip
@@ -1466,7 +1497,7 @@ class DataEngine:
         except Exception:
             pass
         try:
-            for c in psutil.net_connections("udp"):       # UDP/QUIC：无状态，套接字噪声大，每进程最多记 2 条
+            for c in (c for c in self._connections_snapshot() if c.type==socket.SOCK_DGRAM):       # UDP/QUIC：无状态，套接字噪声大，每进程最多记 2 条
                 if not c.pid:
                     continue
                 fact = False
@@ -1582,6 +1613,11 @@ class DataEngine:
         return None
 
     def tick(self):
+        self._in_tick=True;self._tick_connections=None
+        try:return self._tick_impl()
+        finally:self._in_tick=False;self._tick_connections=None
+
+    def _tick_impl(self):
         now = time.time()
         dt = max(now - self.last_time, 0.1)
         self.last_time = now
@@ -1603,6 +1639,7 @@ class DataEngine:
             "sys_up": sys_up, "sys_down": sys_down,
             "sw_on": api_on or bool(sw_name),
             "api_on": api_on, "sw_name": sw_name,
+            "client_id": getattr(self.pipe, 'client_id', ''),
             "sp_on": sp_on, "sp_srv": sp_srv,
             "tun_on": False, "strict_route": None, "mode": "?",
             "n_direct": 0, "n_proxy": 0, "n_reject": 0,
@@ -1645,6 +1682,7 @@ class DataEngine:
             ai_sel = probe_selection(self.pipe, proxy_snapshot, r["mode"])
             if ai_sel:
                 r["ai_group"], r["ai_node"], r["ai_group_type"] = ai_sel
+                r['ai_candidate_group'],r['ai_candidate_node']=ai_sel[:2]
                 r["ai_source"] = ("全局 GLOBAL" if r["mode"] == "global" else
                                   ("AI策略组" if _ai_group_rank(r["ai_group"]) is not None
                                    else "唯一主选择组（订阅无独立AI组）"))
@@ -1652,7 +1690,7 @@ class DataEngine:
             data = self.pipe.connections()
             if not isinstance(data.get("connections"), list):
                 api_on = r["api_on"] = False
-                r["api_error"] = getattr(self.pipe, "last_error", "") or "连接接口返回无效数据"
+                r["api_error"] = getattr(self.pipe, "last_error", "") or "代理内核连接列表暂不可用，正在重试"
             else:
                 explicit = any(user_explicit_proxy(c) for c in data["connections"])
                 r["explicit_proxy"] = explicit
@@ -1665,6 +1703,19 @@ class DataEngine:
             sel = self._local_db_selection()
             if sel:
                 r["sel_group"], r["sel_node"] = sel
+        # FlClash stops ordinary listeners without stopping its controller or
+        # auxiliary probe listener; /configs can retain a stale TUN enable flag.
+        if api_on and getattr(self.pipe, 'client_id', '') == 'flclash':
+            try: interfaces = psutil.net_if_stats()
+            except (OSError, psutil.Error): interfaces = None
+            runtime = flclash_runtime(cfg, interfaces)
+            r.update(runtime)
+            r['tun_on'] = runtime['tun_active'] is True
+            if runtime['proxy_running'] is not True:
+                takeover = False
+                r['explicit_proxy'] = False
+            else:
+                takeover = sp_on or r['tun_on'] or r.get('explicit_proxy', False)
         r["takeover"] = takeover and (api_on or bool(sw_name))
         r['ai_target_state'] = 'waiting'
         r['main_proxy_port'] = int(cfg.get('mixed-port') or cfg.get('port') or 0)
@@ -1913,6 +1964,7 @@ class DataEngine:
 # ----------------------------- 呼吸灯 -----------------------------
 
 class LightDot(QWidget):
+    _frames = {}
     def __init__(self, label="", size=16, parent=None):
         super().__init__(parent)
         self.state = "off"          # off / ok / bad / warn
@@ -1927,18 +1979,18 @@ class LightDot(QWidget):
             self.state = s
             self.update()
 
-    def paintEvent(self, e):
-        p = QPainter(self)
+    def _glow_frame(self, glow):
+        dpr=self.devicePixelRatioF()
+        bucket=round(glow*64)
+        key=(self._s,dpr,self.state,bucket)
+        if key in self._frames:return self._frames[key]
+        pix=QPixmap(round(self._s*dpr),round(self._s*dpr));pix.setDevicePixelRatio(dpr);pix.fill(Qt.transparent)
+        p = QPainter(pix)
         p.setRenderHint(QPainter.Antialiasing)
         base = {"off": GRAY, "ok": GREEN, "bad": RED, "warn": YELLOW}[self.state]
         c = QColor(base)
         s = self._s
-        # All active states share the same clock and waveform; color conveys status.
-        if self.state != "off":
-            t = (math.sin(self.phase) + 1) / 2          # 0..1
-            glow = 0.25 + 0.75 * t
-        else:
-            glow = 0.25
+        glow=bucket/64
         g = QRadialGradient(s / 2, s / 2, s / 2)
         gc = QColor(c); gc.setAlpha(int(235 * glow))
         g.setColorAt(0, gc)
@@ -1951,6 +2003,15 @@ class LightDot(QWidget):
         p.setBrush(QBrush(c))
         m = s / 4
         p.drawEllipse(QPoint(int(s / 2), int(s / 2)), int(s / 4), int(s / 4))
+
+        p.end()
+        if len(self._frames)>=512:self._frames.pop(next(iter(self._frames)))
+        self._frames[key]=pix
+        return pix
+
+    def paintEvent(self, e):
+        glow=0.25+0.75*(math.sin(self.phase)+1)/2 if self.state!="off" else 0.25
+        p=QPainter(self);p.drawPixmap(0,0,self._glow_frame(glow))
 
 
 # ----------------------------- 连接行 -----------------------------
@@ -2132,13 +2193,15 @@ class NetMonitorWidget(QWidget):
     MINI_H = (272, 54)
     PROBE_CHOICES = [("30 秒", 30), ("1 分钟", 60), ("5 分钟", 300), ("10 分钟", 600), ("半小时", 1800)]
 
-    def __init__(self):
+    def __init__(self, capture=True):
         super().__init__()
-        self.setWindowTitle("NetMonitor Pro v22")
+        self.setWindowTitle("NetMonitor")
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.engine = DataEngine()
-        self.settings = QSettings("NetMonitorPro", "NetMonitorPro")
+        self.engine = DataEngine(capture=capture)
+        settings_ini = os.environ.get("NETMONITOR_SETTINGS_INI")
+        self.settings = (QSettings(settings_ini, QSettings.IniFormat) if settings_ini
+                         else QSettings("NetMonitorPro", "NetMonitorPro"))
         # v17's 30-second default produced needless background test traffic.
         # Migrate that legacy default once; users may still explicitly select
         # 30 seconds afterwards if they value faster detection.
@@ -2146,6 +2209,11 @@ class NetMonitorWidget(QWidget):
             if int(self.settings.value("probe_interval", 30)) == 30:
                 self.settings.setValue("probe_interval", 300)
             self.settings.setValue("probe_interval_v18_migrated", True)
+        # A missing setting means a new user: pause history before the sampler
+        # can record anything. An explicitly saved False still means resume.
+        if self.settings.value("history_paused", True, type=bool):
+            if not self.engine.history.pause():
+                LOG.warning("failed to restore paused traffic history: %s", self.engine.history.last_error)
         self._on_top = self.settings.value("always_on_top", True, type=bool)
         if self._on_top:
             self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
@@ -2163,6 +2231,11 @@ class NetMonitorWidget(QWidget):
         self.quality_worker = None
         self.route_worker = None
         self.quality_cache = QualityCache()
+        self.quality_retry = QualityRetry()
+        from quality_evidence import QualityEvidence
+        self.quality_evidence=QualityEvidence()
+        self._display_quality_mode='auto'
+        self._display_quality_base=None
         self._route_retry_at = 0.0
         self.history_export_worker = None
         self._prev_sw_on = False
@@ -2268,25 +2341,34 @@ class NetMonitorWidget(QWidget):
         fl.setSpacing(5)
         pl.addWidget(self.full)
 
-        # 标题栏
+        # 标题栏（仅全盘模式；迷你条不放流量入账入口）
         top = QHBoxLayout()
-        title = QLabel("⚡ NetMonitor Pro 22")
+        title = QLabel("⚡ NetMonitor")
         title.setStyleSheet("font-size:13px; font-weight:600;")
-        btn_close = QPushButton("✕")
-        btn_close.setFixedWidth(28)
-        btn_close.clicked.connect(self.hide)
-        self.btn_pin = QPushButton("📌")
-        self.btn_pin.setFixedWidth(28)
+        paused = self.engine.history.paused
+        self.btn_history_pause = QPushButton("● 已暂停" if paused else "● 入账中")
+        self.btn_history_pause.setFixedSize(62, 26)
+        self.btn_history_pause.setStyleSheet(history_button_css(paused))
+        self.btn_history_pause.clicked.connect(self._toggle_history_paused)
+        self.btn_pin = QPushButton()
+        self.btn_pin.setFixedSize(28, 26)
+        self.btn_pin.setIcon(title_icon('pin'))
+        self.btn_pin.setIconSize(QSize(24, 24))
         self.btn_pin.setCheckable(True)
         self.btn_pin.setChecked(self._on_top)
-        self.btn_pin.setToolTip("窗口置顶开关（点亮=始终置顶）")
-        self.btn_pin.setStyleSheet(
-            "QPushButton { border: 1px solid transparent; border-radius: 4px; padding: 1px; opacity: 0.45; }"
-            "QPushButton:checked { border: 1px solid #4C9AFF; border-radius: 4px;"
-            " background: rgba(76,154,255,0.22); opacity: 1.0; }")
+        self.btn_pin.setToolTip("关闭窗口置顶" if self._on_top else "开启窗口置顶")
+        self.btn_pin.setStyleSheet(PIN_BUTTON_CSS)
         self.btn_pin.clicked.connect(self._toggle_on_top)
+        self.btn_close = QPushButton()
+        self.btn_close.setFixedSize(28, 26)
+        self.btn_close.setIcon(title_icon('close'))
+        self.btn_close.setIconSize(QSize(24, 24))
+        self.btn_close.setToolTip("隐藏到托盘")
+        self.btn_close.setStyleSheet(CLOSE_BUTTON_CSS)
+        self.btn_close.clicked.connect(self.hide)
         top.addWidget(title); top.addStretch(1)
-        top.addWidget(self.btn_pin); top.addWidget(btn_close)
+        top.addWidget(self.btn_history_pause)
+        top.addWidget(self.btn_pin); top.addWidget(self.btn_close)
         fl.addLayout(top)
 
         # 三盏灯
@@ -2372,21 +2454,25 @@ class NetMonitorWidget(QWidget):
         row.addWidget(lbl_probe, 0, Qt.AlignBottom)
         lbl_probe.setFixedHeight(28)
         lbl_probe.setAlignment(Qt.AlignVCenter)
-        self.combo_probe = QComboBox()
+        self.combo_probe = ArrowComboBox()
         for name, sec in self.PROBE_CHOICES:
             self.combo_probe.addItem(name, sec)
         saved = int(self.settings.value("probe_interval", 300))
         idx = next((i for i, (_, s) in enumerate(self.PROBE_CHOICES) if s == saved), 0)
         self.combo_probe.setCurrentIndex(idx)
         self.combo_probe.currentIndexChanged.connect(self._probe_interval_changed)
-        self.btn_ip_quality = QPushButton('IP质量')
-        self.btn_ip_quality.clicked.connect(self.on_ip_quality)
-        self.btn_ip_quality.setToolTip('手动重新检测 AI 实际出口，更新本次启动缓存；不切换主策略组')
+        self.btn_ip_quality = FixedLabelComboBox('IP质量')
+        for label,mode in (('自动检测 / 风险汇总','auto'),('仅检测 IPv4','4'),('仅检测 IPv6','6')):
+            self.btn_ip_quality.addItem(label,mode)
+        self.btn_ip_quality.activated.connect(
+            lambda index:self._select_quality_mode(self.btn_ip_quality.itemData(index)))
+        self.btn_ip_quality.manualTriggered.connect(self.on_ip_quality)
+        self.btn_ip_quality.setToolTip('左侧：按当前模式手动检测 AI 实际出口\n右侧：选择协议并补查缺项，成功项复用；不切换主策略组')
         self.btn_delay = QPushButton("测AI延迟")
         self.btn_delay.clicked.connect(self.on_delay)
         for control in (self.combo_probe, self.btn_ip_quality, self.btn_delay):
             control.setFixedSize(78, 28)
-            control.setStyleSheet('color:#FFFFFF; font-size:12.5px; letter-spacing:0px; padding:2px 5px;')
+        self.btn_delay.setStyleSheet('color:#FFFFFF; font-size:12.5px; letter-spacing:0px; padding:2px 5px;')
         row.addWidget(self.combo_probe, 0, Qt.AlignBottom); row.addStretch(1)
         row.addWidget(self.btn_ip_quality, 0, Qt.AlignBottom)
         self.lbl_latency = QLabel("— ms")
@@ -2476,9 +2562,6 @@ class NetMonitorWidget(QWidget):
         self.freeze_conns = False
         self._freeze_list_mode = None
         scroll.viewport().installEventFilter(self)
-        holder.installEventFilter(self)
-        for r_ in self.rows:
-            r_.installEventFilter(self)
         scroll.setWidget(holder)
         fl.addWidget(scroll, 1)
 
@@ -2503,18 +2586,9 @@ class NetMonitorWidget(QWidget):
         self.toast_timer.timeout.connect(self.toast.hide)
 
     def _build_tray(self):
-        pix = QPixmap(32, 32)
-        pix.fill(Qt.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setBrush(QColor(GREEN)); p.setPen(Qt.NoPen)
-        p.drawRoundedRect(2, 2, 28, 28, 8, 8)
-        p.setPen(QPen(QColor("#12141C"), 2))
-        p.setFont(QFont("Arial", 12, QFont.Bold))
-        p.drawText(pix.rect(), Qt.AlignCenter, "N")
-        p.end()
-        self.tray = QSystemTrayIcon(QIcon(pix), self)
+        self.tray = QSystemTrayIcon(QIcon(os.path.join(os.path.dirname(__file__), 'assets', 'netmonitor.ico')), self)
         menu = QMenu()
+        menu.setToolTipsVisible(True)
         act_show = QAction("显示 / 隐藏", self)
         act_show.triggered.connect(lambda: self.hide() if self.isVisible() else (self.showNormal(), self.activateWindow()))
         self.act_precise = QAction("启用精准进程流量（管理员）", self)
@@ -2524,6 +2598,8 @@ class NetMonitorWidget(QWidget):
             self.act_precise.setEnabled(False)
         self.act_history_status = QAction("流量账本：启动中…", self)
         self.act_history_status.setEnabled(False)
+        self.act_history_pause = QAction("暂停流量入账", self)
+        self.act_history_pause.triggered.connect(self._toggle_history_paused)
         self.act_history_export_24h = QAction("导出最近 24 小时（分钟明细）", self)
         self.act_history_export_24h.triggered.connect(lambda: self._export_history(24))
         self.act_history_export_year = QAction("导出最近 1 年（小时汇总）", self)
@@ -2546,13 +2622,14 @@ class NetMonitorWidget(QWidget):
         menu.addAction(act_logs)
         menu.addAction(self.act_review_counts)
         menu.addSeparator(); menu.addAction(self.act_history_status)
+        menu.addAction(self.act_history_pause)
         menu.addAction(self.act_history_export_24h)
         menu.addAction(self.act_history_export_year)
         menu.addAction(self.act_history_open)
         menu.addSeparator(); menu.addAction(self.act_auto)
         menu.addSeparator(); menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
-        self.tray.setToolTip("NetMonitor Pro 22")
+        self.tray.setToolTip("NetMonitor")
         self.tray.activated.connect(lambda r_: self.showNormal() if r_ == QSystemTrayIcon.Trigger else None)
         self.tray.show()
         self._update_history_actions({
@@ -2561,18 +2638,57 @@ class NetMonitorWidget(QWidget):
             "history_path": self.engine.history.db_path,
             "history_dropped": self.engine.history.dropped_batches,
         })
+        self._update_history_control()
 
     def _update_review_counts(self):
         counts = self.engine.unknown_log.counts()
-        self.act_review_counts.setText(f"待鉴定：域名/其他 {counts['domain']}/500 · 裸IP {counts['ip']}/500 · 异常 {counts['anomaly']}/200")
+        self.act_review_counts.setText(f"待鉴定：域名/其他 {counts['domain']}/500 · IP候选 {counts['ip']}/500 · 异常 {counts['anomaly']}/200")
+
+    def _update_history_control(self):
+        paused = self.engine.history.paused
+        self.btn_history_pause.setText("● 已暂停" if paused else "● 入账中")
+        self.btn_history_pause.setStyleSheet(history_button_css(paused))
+        tip = ("点击恢复流量入账；暂停期间的新流量不会补记，现有记录和实时速率保留。" if paused
+               else "点击暂停流量入账；先落完已排队数据，之后只暂停账本，连接监控继续。")
+        self.btn_history_pause.setToolTip(tip)
+        self.act_history_pause.setText("恢复流量入账" if paused else "暂停流量入账")
+        self.act_history_pause.setToolTip(tip)
+        self.act_history_pause.setStatusTip(tip)
+        self.btn_history_pause.setEnabled(self.engine.history.running)
+        self.act_history_pause.setEnabled(self.engine.history.running)
+
+    def _toggle_history_paused(self):
+        history = self.engine.history
+        pause = not history.paused
+        ok = history.pause() if pause else history.resume()
+        actual = history.paused
+        self.settings.setValue("history_paused", actual)
+        self._update_history_control()
+        self._update_history_actions({
+            "history_status": history.status,
+            "history_error": history.last_error,
+            "history_path": history.db_path,
+            "history_dropped": history.dropped_batches,
+        })
+        if ok and actual:
+            self._show_toast("流量入账已暂停；暂停期间的新流量不会补记")
+        elif ok:
+            self._show_toast("流量入账已恢复，按 10 秒合并写入")
+        elif pause and actual:
+            self._show_toast("已停止新入账，但暂停前队列未能全部确认落盘", 5000)
+        else:
+            self._show_toast(history.last_error or "流量账本状态切换失败", 5000)
 
     def _update_history_actions(self, data):
         status = data.get("history_status", "starting")
         dropped = int(data.get("history_dropped") or 0)
         if status == "running":
-            suffix = f" · 丢弃 {dropped} 批" if dropped else ""
-            self.act_history_status.setText(f"流量账本：运行中（分钟30天 / 小时1年）{suffix}")
             enabled = True
+            if self.engine.history.paused:
+                self.act_history_status.setText("流量账本：已暂停（新流量不入账）")
+            else:
+                suffix = f" · 丢弃 {dropped} 批" if dropped else ""
+                self.act_history_status.setText(f"流量账本：运行中（10秒合并 · 分钟30天 / 小时1年）{suffix}")
         elif status == "error":
             self.act_history_status.setText("流量账本：写入异常")
             enabled = False
@@ -2658,6 +2774,7 @@ class NetMonitorWidget(QWidget):
 
     def _toggle_on_top(self):
         self._on_top = self.btn_pin.isChecked()
+        self.btn_pin.setToolTip("关闭窗口置顶" if self._on_top else "开启窗口置顶")
         self.settings.setValue("always_on_top", self._on_top)
         # 同步 Qt 内部标志（持久行为正确）+ 立即用 Win32 修正层级（避免闪烁/抢焦点）
         self.setWindowFlag(Qt.WindowStaysOnTopHint, self._on_top)
@@ -2750,13 +2867,13 @@ class NetMonitorWidget(QWidget):
             delay_ms = 5000 * self._probe_retry if self._probe_retry <= 3 else 30000
             self.probe_retry_timer.start(delay_ms)
             if prev is True:
-                self.tray.showMessage("NetMonitor Pro", "⚠ 当前节点的 AI 目标探测失败；不代表节点所有网站都不可用", QSystemTrayIcon.Warning, 6000)
+                self.tray.showMessage("NetMonitor", "⚠ 当前节点的 AI 目标探测失败；不代表节点所有网站都不可用", QSystemTrayIcon.Warning, 6000)
             self._node_bad = True
         else:
             self._probe_retry = 0
             self.probe_retry_timer.stop()
             if prev is False and getattr(self, "_node_bad", False):
-                self.tray.showMessage("NetMonitor Pro", "✓ AI 节点已恢复", QSystemTrayIcon.Information, 4000)
+                self.tray.showMessage("NetMonitor", "✓ AI 节点已恢复", QSystemTrayIcon.Information, 4000)
             self._node_bad = False
 
     # ---------- 迷你条 ----------
@@ -2834,17 +2951,16 @@ class NetMonitorWidget(QWidget):
 
     # ---------- 事件 ----------
     def eventFilter(self, obj, ev):
-        # 连接区任意位置左键单击 = 固定/取消固定行刷新。
-        # 行/标签默认不消费鼠标事件，会逐级冒泡到 holder/viewport，一并监听。
-        # ⚠️ 必须返回 False 放行事件：主窗口 mouseReleaseEvent 依赖冒泡路径
-        # 重启刷新定时器与动画，吞掉会导致整个窗口停刷（timer 停在按下时的状态）。
-        if ev.type() == QEvent.MouseButtonRelease and ev.button() == Qt.LeftButton:
-            if (obj is self.conn_scroll.viewport()
-                    or obj is self.conn_scroll.widget()
-                    or obj in self.rows):
-                self.freeze_conns = not self.freeze_conns
-                self._freeze_list_mode = None
-                self.refresh()
+        # Observe only the viewport: releases from rows/labels/holder bubble
+        # here exactly once. Do not consume them: the window must resume its
+        # timers and finish dragging in mouseReleaseEvent.
+        if (obj is self.conn_scroll.viewport()
+                and ev.type() == QEvent.MouseButtonRelease
+                and ev.button() == Qt.LeftButton
+                and not getattr(self, '_moved', False)):
+            self.freeze_conns = not self.freeze_conns
+            self._freeze_list_mode = None
+            self.refresh()
         return super().eventFilter(obj, ev)
 
     def mousePressEvent(self, e):
@@ -3074,30 +3190,50 @@ class NetMonitorWidget(QWidget):
             self.btn_delay.setText("测AI延迟")
             self._delay_result_key = ""
 
-    def on_ip_quality(self):
+    def _select_quality_mode(self,mode):
+        self._display_quality_mode=mode
+        if hasattr(self,'_last_data'):self._last_data['quality_mode']=mode
+        self.on_ip_quality(fill_missing=True)
+
+    def on_ip_quality(self, fill_missing=False):
         d = getattr(self, '_last_data', {})
+        switch_ok, switch_hint = proxy_switch_state(d)
+        if not switch_ok:
+            self._show_toast(switch_hint)
+            return
+        if not self._ensure_proxy_action():
+            return
         key = quality_key(d)
         if not key:
             self._show_toast('未确认 AI 代理出口，或当前未接管/直连；不进行 IP 检测')
             return
-        if not self._start_quality(d, manual=True):
+        if not self._start_quality(d, manual=True, fill_missing=fill_missing):
             self._show_toast('IP 质量正在检测，请稍候')
 
-    def _start_quality(self, d, manual=False):
+    def _start_quality(self, d, manual=False, fill_missing=False):
         key = quality_key(d)
         if self.quality_worker and self.quality_worker.isRunning():
             return False
-        if not self.quality_cache.begin(key, manual):
+        if manual:self.quality_retry.reset(key)
+        retry=self.quality_retry.due(key)
+        if not self.quality_cache.begin(key, manual or retry):
             return False
-        self.quality_worker = IPQualityWorker(self.engine.pipe, node=d['ai_node'], parent=self)
-        self.quality_worker.done.connect(lambda result, k=key: self._quality_done(k, result))
+        if retry:self.quality_retry.consume(key)
+        family=int(d['quality_mode']) if d.get('quality_mode') in ('4','6') else None
+        self.quality_worker = IPQualityWorker(self.engine.pipe, node=d['ai_node'], parent=self, family=family,
+            cache=self.quality_evidence.query_snapshot(key), force=manual and not fill_missing)
+        self.quality_worker.done.connect(lambda result, k=key, m=manual: self._quality_done(k, result, m))
         self.quality_worker.finished.connect(lambda w=self.quality_worker:self._network_worker_finished('quality_worker',w))
+        LOG.info('IP quality started trigger=%s mode=%s', 'manual' if manual else 'automatic', d.get('quality_mode','auto'))
         self.quality_worker.start()
         self._sync_detection_buttons()
         return True
 
-    def _quality_done(self, key, result):
+    def _quality_done(self, key, result, manual=False):
         self.quality_cache.finish(key, result)
+        self.quality_evidence.record(key,result)
+        tracker=getattr(self,'quality_retry',None)
+        if tracker:tracker.completed(key,result)
         if result.get('cancelled'):
             LOG.info('IP quality cancelled; no new result cached')
         elif result.get('errors'):
@@ -3105,7 +3241,11 @@ class NetMonitorWidget(QWidget):
         else:
             LOG.info('IP quality complete sources=%s', ','.join(k for k in ('ippure','cleanip') if result.get(k)))
         if not self._shutting_down:
-            self._render_quality(getattr(self, '_last_data', {}))
+            current=getattr(self, '_last_data', {})
+            self._render_quality(current)
+            if manual and key==quality_key(current) and not result.get('cancelled'):
+                self._last_quality_feedback=(key,quality_feedback(result))
+                self._show_toast(self._last_quality_feedback[1],6500)
 
     def _network_worker_finished(self, attribute, worker):
         if getattr(self, attribute, None) is worker:setattr(self, attribute, None)
@@ -3117,12 +3257,27 @@ class NetMonitorWidget(QWidget):
         for button, worker, text in ((self.btn_delay,self.probe_worker,'测AI延迟'),
                                      (self.btn_ip_quality,self.quality_worker,'IP质量')):
             busy=bool(worker and worker.isRunning())
-            button.setText('检测中…' if busy else text)
+            _lbl_set(button,'检测中…' if busy else text)
             button.setEnabled(not busy)
+        data = getattr(self, '_last_data', {})
+        switch_ok, switch_hint = proxy_switch_state(data)
+        manual_ok, manual_hint = proxy_action_state(data) if switch_ok else (False, switch_hint)
+        busy = bool(self.quality_worker and self.quality_worker.isRunning())
+        self.btn_ip_quality.setManualEnabled(manual_ok and not busy)
+        tip = '左侧：按当前模式手动检测\n右侧：选择协议并补查缺项，成功项复用'
+        if busy:
+            tip += '\n当前正在检测，完成后可再次手动刷新'
+        elif not manual_ok:
+            tip += '\n当前不可手动检测：' + manual_hint
+        feedback=getattr(self,'_last_quality_feedback',None)
+        if feedback and feedback[0]==quality_key(data):tip+='\n上次手动操作：\n'+feedback[1]
+        _tip_set(self.btn_ip_quality, tip)
 
     def _route_done(self, result, mode, profile, epoch=None):
         if epoch is not None and epoch!=getattr(self,'_route_epoch',0):return
-        if result.get('route') and not result.get('cancelled') and not self._shutting_down:
+        if result.get('cancelled'):return
+        LOG.info('AI route confirmation completed route=%s errors=%s',bool(result.get('route')),result.get('errors',{}))
+        if result.get('route') and not self._shutting_down:
             self.engine.pipe.ai_route_hint = dict(result, mode=mode, profile=profile, at=time.monotonic())
 
     def _refresh_quality(self, d):
@@ -3134,7 +3289,10 @@ class NetMonitorWidget(QWidget):
         eligible = d.get('api_on') and (d.get('sp_on') or d.get('tun_on')) and d.get('mode')=='rule'
         if eligible and d.get('ai_target_state')=='waiting' and time.monotonic()>=self._route_retry_at:
             if not self.route_worker or not self.route_worker.isRunning():
-                self._route_retry_at = time.monotonic()+30
+                attempt=getattr(self,'_route_attempt',0)
+                self._route_attempt=attempt+1
+                self._route_retry_at=time.monotonic()+(1,3,8,30)[min(attempt,3)]
+                LOG.info('AI route confirmation started candidate=%s attempt=%s',d.get('ai_candidate_node',''),attempt+1)
                 port = d.get('main_proxy_port')
                 if port:
                     self.route_worker = IPQualityWorker(self.engine.pipe, port=port, parent=self)
@@ -3147,20 +3305,24 @@ class NetMonitorWidget(QWidget):
     def _render_quality(self, d):
         key = quality_key(d)
         result = self.quality_cache.results.get(key) if key else None
+        from quality_evidence import risk_clean,family_label
+        result=self.quality_evidence.view(key,result)
+        _lbl_set(self.lbl_flclash,'双IP节点' if (result or {}).get('dual_stack') else '')
+        _tip_set(self.lbl_flclash,'同一订阅节点已实际观察到IPv4及IPv6出口；不代表全部地址均已检测。')
         self.ip_type_badges.render(result or {})
         flags_detail = ''
-        clean=(result or {}).get('cleanip') or {}
+        clean=risk_clean(result)
         flags,clean_detail=risk_display(clean)
-        flags_detail+='\n'+clean_detail
+        flags_detail='完整标记：'+flags+'\n'+clean_detail
         if (result or {}).get('errors',{}).get('cleanip_details'):
             flags_detail+='\n明细读取失败：'+result['errors']['cleanip_details']
         from cleanip_details import risk_colored_parts
         self.lbl_risk_flags.set_colored_parts(risk_colored_parts(clean))
-        self.lbl_risk_flags.setToolTip(flags_detail)
+        _tip_set(self.lbl_risk_flags,flags_detail)
         location, location_tip = location_display(result or {})
         self.lbl_location.set_full_text(location)
         self._fit_location()
-        self.lbl_location.setToolTip(location_tip)
+        _tip_set(self.lbl_location,location_tip)
         pending = bool(key and self.quality_cache.pending==key)
         _lbl_set(self.lbl_cleanrisk,'风险：—')
         if not key:
@@ -3174,34 +3336,60 @@ class NetMonitorWidget(QWidget):
             _lbl_set(self.lbl_ippure, 'IPPure：检测中…' if pending else 'IPPure：等待检测')
             _lbl_set(self.lbl_cleanip, 'CleanIP：检测中…' if pending else 'CleanIP：—')
             return
-        errors=result.get('errors',{})
+        errors=result.get('refresh_errors') or result.get('errors',{})
+        if errors:
+            prefix='刷新失败 · 标记：' if result.get('refresh_errors') else '检测未完成 · 标记：'
+            self.lbl_risk_flags.set_colored_parts(risk_colored_parts(risk_clean(result),prefix))
+        mismatches=result.get('protocol_mismatches') or {}
         pure=result.get('ippure')
         clean=result.get('cleanip')
-        if pure:
+        if pure and pure.get('score') is not None:
             text,_=ippure_badge(pure['score'])
-            _lbl_set(self.lbl_ippure, f'IPPure：<span style="color:{risk_color(pure["score"])}">{html.escape(text)}</span>')
+            _lbl_set(self.lbl_ippure, f'IPPure：<span style="color:{risk_color(pure["score"])}">{html.escape(text)}</span> <small>{family_label(pure)}</small>')
+        elif pure:
+            _lbl_set(self.lbl_ippure,'IPPure：IPv6 不提供系数')
         else:
             _lbl_set(self.lbl_ippure, 'IPPure：暂不可用（悬停查看）')
         if clean:
             _lbl_set(self.lbl_cleanip,
                 f'CleanIP：<span style="color:{clean_color(clean["score"])};font-weight:700">{clean["score"]:g} {html.escape(clean["grade"])}</span>'
-                f' /100')
+                f' /100 <small>{family_label(clean)}</small>')
             _lbl_set(self.lbl_cleanrisk,f'风险：<span style="color:{risk_color(clean["risk"])}">{clean["risk"]:g}</span> /100')
         else:
             _lbl_set(self.lbl_cleanip, 'CleanIP：暂不可用')
-        tip = f"AI节点：{d.get('ai_node')}\n{d.get('ai_source','')}\n检测时间：{result.get('time','')}\n"
+        # A cached score is visibly old if this website failed on the latest attempt.
+        for site,label in (('ippure',self.lbl_ippure),('cleanip',self.lbl_cleanip)):
+            item=result.get(site)
+            if item and (result.get('refresh_errors') or (site in errors and item.get('_observed_at')!=result.get('time'))):
+                _lbl_set(label,label.text()+' <small>旧</small>')
+            elif not item and site in mismatches:
+                name='IPPure' if site=='ippure' else 'CleanIP'
+                _lbl_set(label,name+'：IPv'+str(mismatches[site]['requested'])+' 未取得')
+        tip = f"AI节点：{d.get('ai_node')}\n{d.get('ai_source','')}\n本次操作时间：{result.get('time','')}\n"
+        tip+='展示模式：'+('本次运行已检测结果，各网站分别展示较差项' if d.get('quality_mode','auto')=='auto' else 'IPv'+d['quality_mode']+'专项结果')+'\n'
+        tip+='类型与标记汇总本节点已发现的负面证据，可能来自另一协议或先前检测；不代表未检测出口干净。\n'
+        discovery=result.get('discovery') or {}
+        for version,address in discovery.get('ips',{}).items():tip+='自动识别 IPv'+version+'：'+address+'\n'
+        for version,error in discovery.get('errors',{}).items():tip+='IPv'+version+'暂未取得，未判定不支持：'+error+'\n'
+        tip+='评分按已核实的具体IP查询；查询请求本身的协议不等于被查询IP的协议。\n'
         tip += '本次启动按订阅/节点缓存；切回不会自动重测。手动点击可更新。\nIPPure/风险分越低越好；CleanIP 纯净度越高越好。第三方评分仅供参考。'
         if pure: tip += '\nIPPure 出口 IP：'+pure['ip']
         if clean: tip += '\nCleanIP 出口 IP：'+clean['ip']+'\n完整标记：'+clean['flags']
-        if result.get('ip_mismatch'):tip += '\n注意：两站观测 IP 不同，不能视为同一个 IP 的综合评分。'
+        if result.get('ip_mismatch'):tip += '\n两站为同节点不同出口；评分各自展示，类型与地区按节点汇总。'
         if d.get('other_ai_exits'):tip += '\n存在其他 AI 出口，此处优先跟随 ChatGPT 实际路径。'
+        if result.get('ippure_retry'):tip += '\nIPPure IPv4补测：'+str(result['ippure_retry'])
+        for record in result.get('node_evidence',[]):
+            item=record['data'];tip+='\n已检测：'+record['source']+' '+item.get('ip','')+'；时间 '+item.get('_observed_at','')+'；分数 '+str(item.get('score','未提供'))
         if pending:tip += '\n正在手动刷新，当前为上次结果。'
         for label,error in errors.items():tip += '\n'+label+'：'+error
         if result.get('refresh_errors'):
             tip+='\n最近刷新失败，保留上次成功结果（不是本次新检测值）：'+str(result.get('refresh_time',''))
             for label,error in result['refresh_errors'].items():tip+='\n'+label+'：'+error
-            self.lbl_risk_flags.set_colored_parts(risk_colored_parts(clean,'刷新失败 · 标记：'))
-            self.lbl_risk_flags.setToolTip(tip)
+            self.lbl_risk_flags.set_colored_parts(risk_colored_parts(risk_clean(result),'刷新失败 · 标记：'))
+            self.lbl_risk_flags.setToolTip('完整标记：'+flags+'\n'+tip)
+        if errors:
+            tip+='\n本次检测未完整成功；“旧”表示保留的先前证据，并非本次新查询成功。'
+            _tip_set(self.lbl_risk_flags,'完整标记：'+flags+'\n'+tip)
         for label in (self.lbl_ippure,self.lbl_cleanip,self.lbl_cleanrisk):_tip_set(label,tip)
 
     def _fit_location(self):
@@ -3225,11 +3413,21 @@ class NetMonitorWidget(QWidget):
 
     # ---------- 刷新 ----------
     def _prepare_target_transition(self, d):
+        base=quality_key(dict(d,quality_mode='auto'))
+        if base and base!=getattr(self,'_display_quality_base',None):
+            self._display_quality_base=base;self._display_quality_mode='auto'
+        d['quality_mode']=getattr(self,'_display_quality_mode','auto')
+        control=getattr(self,'btn_ip_quality',None)
+        if control is not None:
+            index=control.findData(d['quality_mode'])
+            if index>=0 and control.currentIndex()!=index:control.setCurrentIndex(index)
         signature=tuple(d.get(k) for k in ('profile_id','api_generation','mode','ai_target_state','ai_group','ai_node'))
+        if d.get('ai_target_state')=='waiting':signature+=(d.get('ai_candidate_group'),d.get('ai_candidate_node'))
         if signature==getattr(self,'_target_signature',None):return
         self._target_signature=signature
         self._route_epoch=getattr(self,'_route_epoch',0)+1
         self._route_retry_at=time.monotonic()+0.25
+        self._route_attempt=0
         self.engine.pipe.ai_route_hint=None
         self.probe_retry_timer.stop()
         self.probe_state=None
@@ -3269,11 +3467,11 @@ class NetMonitorWidget(QWidget):
         if traffic_status == "running":
             self.act_precise.setText("精准进程流量：已启用（ETW）")
             self.act_precise.setEnabled(False)
-            self.tray.setToolTip("NetMonitor Pro 22 · 精准进程流量已启用")
+            self.tray.setToolTip("NetMonitor · 精准进程流量已启用")
         elif traffic_status == "admin_required":
             self.act_precise.setText("启用精准进程流量（管理员）")
             self.act_precise.setEnabled(True)
-            self.tray.setToolTip("NetMonitor Pro 22 · 普通权限模式")
+            self.tray.setToolTip("NetMonitor · 普通权限模式")
         else:
             self.act_precise.setText("精准进程流量不可用")
             self.act_precise.setEnabled(False)
@@ -3317,11 +3515,15 @@ class NetMonitorWidget(QWidget):
             self._delay_result_key = ""
             self.btn_delay.setText("测AI延迟")
             self.btn_delay.setEnabled(True)
-        self.light_take.set_state("ok" if effective_take else ("warn" if sw_gui else "off"))
+        self.light_take.set_state("ok" if effective_take else ("warn" if sw_gui and d.get("proxy_running") is not False else "off"))
         ways = []
         ways.append("系统代理 开" if d["sp_on"] else "系统代理 关")
         ways.append("TUN 开" if d["tun_on"] else "TUN 关")
         take_tip = "接管方式: " + " · ".join(ways)
+        if d.get('proxy_running') is False:
+            take_tip += "\nFlClash 已停止代理：普通入站已关闭，实际TUN未运行；配置开关和旧连接不代表正在接管。"
+        elif d.get('runtime_uncertain'):
+            take_tip += "\nFlClash 实际接管状态暂无法确认，暂停节点探测。"
         if not sw_gui and d["sw_on"]:
             take_tip += ("\n界面已关闭；后台内核正在接管" if effective_take
                          else "\n界面已关闭；后台内核当前未接管")
@@ -3401,7 +3603,7 @@ class NetMonitorWidget(QWidget):
             _tip_set(self.lbl_proxy_up, proxy_tip)
             _tip_set(self.lbl_proxy_down, proxy_tip)
             self.spark.push(d["sys_down"])
-            proxy_context = sw_gui or effective_take
+            proxy_context = (sw_gui or effective_take) and d.get("proxy_running") is not False
             if proxy_context:
                 health_key = proxy_health_key(d)
                 # GUI 已关闭但后台内核确实接管时，API 节点/分流仍是当前真实网络数据。
@@ -3409,6 +3611,7 @@ class NetMonitorWidget(QWidget):
                     self.btn_delay.setEnabled(True)
                     self.btn_ip_quality.setEnabled(True)
                     _lbl_set(self.lbl_modes, mode_rich_text(d))
+                    _tip_set(self.lbl_modes, '')
                     node_label, _shown_exit = format_node_status(d)
                     _lbl_set(self.lbl_node, node_label)
                     _tip_set(self.lbl_node, node_status_tooltip(d))
@@ -3437,7 +3640,10 @@ class NetMonitorWidget(QWidget):
                 else:
                     _lbl_set(self.lbl_rules, "")
             else:
-                if d["sw_on"]:
+                if d.get('proxy_running') is False:
+                    _lbl_set(self.lbl_modes, "FlClash 已停止代理（软件仍运行 · 显示系统连接）")
+                    _tip_set(self.lbl_modes, take_tip)
+                elif d["sw_on"]:
                     state = ("当前仍在接管网络" if effective_take else
                              ("当前为直连模式" if d.get("mode") == "direct" else "当前未接管网络"))
                     _lbl_set(self.lbl_modes, f"代理软件界面未运行（后台内核运行中 · {state}）")
@@ -3551,6 +3757,8 @@ def selftest():
             "history_error": d.get("history_error"),
             "history_path": d.get("history_path"),
             "history_dropped": d.get("history_dropped"),
+            "history_paused": eng.history.paused,
+            "history_write_interval": eng.history.write_interval,
             "sample": [
                 {"host": c["host"], "exit": c["exit"], "kind": c["kind"],
                  "display_class": connection_class(c),
@@ -3575,12 +3783,99 @@ def selftest():
         eng.close()
 
 
+def gui_selftest():
+    """Run the real first-run GUI only with explicitly isolated user state."""
+    def emit(payload):
+        rendered = json.dumps(payload, ensure_ascii=False, indent=2)
+        if "--selftest-output" in sys.argv:
+            idx = sys.argv.index("--selftest-output")
+            if idx + 1 < len(sys.argv):
+                with open(sys.argv[idx + 1], "w", encoding="utf-8") as out:
+                    out.write(rendered)
+                return
+        stdout = getattr(sys, "stdout", None)
+        if stdout is not None:
+            print(rendered)
+
+    required = ("NETMONITOR_SETTINGS_INI", "NETMONITOR_HISTORY_DIR",
+                "NETMONITOR_LOG_DIR", "NETMONITOR_LOCK_DIR")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        emit({"ok": False, "error": "gui selftest requires isolated state",
+              "missing": missing})
+        return False
+
+    settings_ini = os.path.abspath(os.environ["NETMONITOR_SETTINGS_INI"])
+    history_dir = os.path.abspath(os.environ["NETMONITOR_HISTORY_DIR"])
+    fresh_settings = not os.path.exists(settings_ini)
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    app = QApplication.instance() or QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    widget = NetMonitorWidget(capture=False)
+    widget.show()
+    history = widget.engine.history
+    history_path = os.path.abspath(history.db_path)
+    try:
+        isolated_history = os.path.commonpath([history_path, history_dir]) == history_dir
+    except ValueError:
+        isolated_history = False
+
+    def row_count():
+        history.flush()
+        if not os.path.isfile(history_path):
+            return 0
+        conn = sqlite3.connect(history_path)
+        try:
+            return conn.execute("SELECT COUNT(*) FROM traffic_minute").fetchone()[0]
+        finally:
+            conn.close()
+
+    rows_before = row_count()
+    autostart_before = widget._autostart_get()
+    button_text = widget.btn_history_pause.text()
+    history_status = history.status
+    QTimer.singleShot(22000, app.quit)  # two 10-second ledger cycles
+    app.exec()
+    rows_after = row_count()
+    autostart_after = widget._autostart_get()
+    payload = {
+        "ok": all((fresh_settings, isolated_history, history.paused,
+                   button_text == "● 已暂停", rows_before == 0, rows_after == 0,
+                   autostart_before == autostart_after)),
+        "settings_was_fresh": fresh_settings,
+        "isolated_history_path": isolated_history,
+        "capture_requested": False,
+        "history_status": history_status,
+        "history_paused": history.paused,
+        "history_error": history.last_error,
+        "button_text": button_text,
+        "rows_before": rows_before,
+        "rows_after": rows_after,
+        "observation_seconds": 22,
+        "autostart_unchanged": autostart_before == autostart_after,
+        "settings_path": settings_ini,
+        "history_path": history_path,
+    }
+    emit(payload)
+    widget.deleteLater()
+    return payload["ok"]
+
+
 if __name__ == "__main__":
     setup_logging()
     def _exception_hook(kind, value, traceback):
         LOG.error("unhandled exception", exc_info=(kind, value, traceback))
         sys.__excepthook__(kind, value, traceback)
     sys.excepthook = _exception_hook
+    if "--browser-selftest" in sys.argv:
+        # Reject the retired diagnostic explicitly rather than accidentally
+        # opening the application when an old maintenance command is used.
+        result={'ok':False,'error':'后台浏览器检测功能已移除'}
+        if '--selftest-output' in sys.argv:
+            with open(sys.argv[sys.argv.index('--selftest-output')+1],'w',encoding='utf-8') as stream:json.dump(result,stream,ensure_ascii=False,indent=2)
+        sys.exit(2)
+    if "--gui-selftest" in sys.argv:
+        sys.exit(0 if gui_selftest() else 1)
     if "--selftest" in sys.argv:
         selftest()
         sys.exit(0)
@@ -3609,6 +3904,7 @@ if __name__ == "__main__":
         if request_elevated_relaunch():
             sys.exit(0)
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "assets", "netmonitor.ico")))
     app.setFont(QFont("Microsoft YaHei UI", 9))
     qInstallMessageHandler(lambda kind, context, message:
                           LOG.warning("Qt %s: %s", kind, display_text(message)[:1000]))

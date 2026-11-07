@@ -253,6 +253,59 @@ class TrafficHistoryStoreTests(unittest.TestCase):
         self.assertEqual(version, "2")
         self.assertEqual(row, ("legacy-connection", "health_check", 0))
 
+    def test_records_are_batched_into_one_transaction_until_flush(self):
+        calls = []
+        original = self.store._write_records
+
+        def wrapped(conn, records):
+            calls.append(len(records))
+            return original(conn, records)
+
+        self.store._write_records = wrapped
+        self.assertTrue(self.store.record([sample()]))
+        self.assertTrue(self.store.record([sample()]))
+        self.assertTrue(self.store.flush())
+        self.assertEqual(calls, [2])
+
+    def test_pending_records_write_after_interval_without_flush(self):
+        self.store.close()
+        self.store = TrafficHistoryStore(self.db_path, anomaly_mib=1, write_interval=0.03)
+        self.assertTrue(self.store.record([sample()]))
+        deadline = time.monotonic() + 2
+        count = 0
+        while time.monotonic() < deadline:
+            with closing(sqlite3.connect(self.db_path)) as conn:
+                count = conn.execute("SELECT COUNT(*) FROM traffic_minute").fetchone()[0]
+            if count:
+                break
+            time.sleep(0.02)
+        self.assertEqual(count, 1)
+
+    def test_pause_flushes_old_queue_drops_new_samples_and_resume_continues(self):
+        stamp = int(time.time())
+        self.assertTrue(self.store.record([sample()], observed_at=stamp))
+        self.assertTrue(self.store.pause())
+        self.assertTrue(self.store.paused)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            uploaded = conn.execute("SELECT SUM(upload_bytes) FROM traffic_minute").fetchone()[0]
+        self.assertEqual(uploaded, 300_000)
+
+        dropped = self.store.dropped_batches
+        self.assertFalse(self.store.record([sample(upload_bytes=900_000)], observed_at=stamp + 1))
+        self.assertTrue(self.store.flush())
+        self.assertEqual(self.store.dropped_batches, dropped)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            uploaded = conn.execute("SELECT SUM(upload_bytes) FROM traffic_minute").fetchone()[0]
+        self.assertEqual(uploaded, 300_000)
+
+        self.assertTrue(self.store.resume())
+        self.assertFalse(self.store.paused)
+        self.assertTrue(self.store.record([sample(upload_bytes=900_000)], observed_at=stamp + 2))
+        self.assertTrue(self.store.flush())
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            uploaded = conn.execute("SELECT SUM(upload_bytes) FROM traffic_minute").fetchone()[0]
+        self.assertEqual(uploaded, 1_200_000)
+
 
 if __name__ == "__main__":
     unittest.main()

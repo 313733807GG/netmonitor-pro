@@ -2,8 +2,151 @@
 import ipaddress
 import ntpath
 import time
+from functools import lru_cache
 
 ALIASES = (
+    # 2026-11-03 current review; third-party sites are not represented as official.
+    ('public.games.geforce.com', 'NVIDIA GeForce · 游戏目录服务'),
+    ('gfwsl.geforce.com', 'NVIDIA GeForce · 应用服务'),
+    ('gfwsl.geforce.cn', 'NVIDIA GeForce · 中国服务'),
+    ('gemini.google', 'Google Gemini'),
+    ('lawnchair.app', 'Lawnchair · 启动器项目'),
+    ('gkd-subscription-667.pages.dev', 'GKD · 第三方规则订阅'),
+    ('ecombdimg.com', '抖音电商 · 图片资源'),
+    ('stripecdn.com', 'Stripe · 静态资源'),
+    ('gh-proxy.org', 'GH Proxy · 第三方 GitHub 镜像'),
+    ('cpfgenerator.org', 'CPF Generator · 巴西税号工具'),
+    ('whiz.tools', 'Whiz Tools · 在线工具'),
+    ('loongweb.com', 'LoongWeb · 网站服务'),
+    ('brazil-visa.tw', 'Brazil Visa · 第三方签证信息'),
+    ('pub-a0d1f5ea1fb84aaab0ba80e79d99c07e.r2.dev', 'Cloudflare R2 · 公共存储'),
+    ('ipqualityscore.com', 'IPQualityScore · IP 信誉服务'),
+    ('hdaa.shuzilm.cn', '数字联盟 · 可信ID与设备风控'),
+    ('my.microsoftpersonalcontent.com', 'OneDrive · 个人内容'),
+    ('telegram.me', 'Telegram · 官方短链'),
+    ('yastatic.net', 'Yandex · 静态资源'),
+    ('cdn-cookieyes.com', 'CookieYes · 静态资源'),
+    ('rapidproxy.io', 'RapidProxy · 代理服务'),
+    ('proxy001.com', 'Proxy001 · 代理服务'),
+    ('mokeaigc.ai', 'Moke AIGC · AI 服务'),
+    ('loliapi.com', 'LoliAPI · 图片接口'),
+    ('cisco.com', 'Cisco · 网络服务'),
+    ('logitechg.com.cn', '罗技 G · 中国服务'),
+    ('logitech.io', '罗技 · 应用服务'),
+    ('skyvpn.me', 'SkyVPN · 应用服务'),
+
+    # 2026-10-31 historical review: public service domains and first-party documentation.
+    ('blob.core.windows.net', '微软 Azure · 存储'),
+    ('sfx.ms', 'OneDrive · 应用服务'),
+    ('aka.ms', '微软 · 官方短链'),
+    ('azurewebsites.net', '微软 Azure · 应用托管'),
+    ('static.microsoft', '微软 · 静态资源'),
+    ('msftncsi.com', 'Windows · 网络连接检测'),
+    ('customeremail.microsoftrewards.com', '微软 Rewards · 邮件'),
+    ('hitv.com', '芒果TV · 网络服务'),
+    ('blz-contentstack.com', '战网 · 游戏资源'),
+    ('166.net', '网易 · 网络服务'),
+    ('miaozhen.com', '秒针 · 网站统计'),
+    ('sectigo.com', 'Sectigo · 证书状态检查'),
+    ('nvidia.cn', 'NVIDIA · 中国服务'),
+    ('nvidiagrid.net', 'NVIDIA GRID · 云服务'),
+    ('msi.cn', '微星 · 中国服务'),
+    ('alidns.com', '阿里公共 DNS'),
+    ('favicon.la', 'Favicon.la · 图标代理'),
+    ('favicon.im', 'Favicon.im · 图标代理'),
+    ('huorong.cn', '火绒安全 · 更新服务'),
+    ('bluecdn.com', 'BlueCDN · 内容分发'),
+    ('miwifi.com', '小米路由器 · 网络服务'),
+    ('feishucdn.com', '飞书 · 静态资源'),
+    ('loli.net', 'loli.net · 公共镜像'),
+    ('superbed.cc', 'Superbed · 图床'),
+    ('dicebear.com', 'DiceBear · 头像服务'),
+    ('imgdb.cn', 'IMGDB · 图床'),
+    ('liblib.tv', 'LiblibAI · 模型服务'),
+    ('globalsign.net', 'GlobalSign · 证书状态检查'),
+    ('adtidy.org', 'AdGuard · 过滤规则'),
+    ('imgbb.com', 'ImgBB · 图床'), ('ibb.co', 'ImgBB · 图片资源'),
+    ('bilibili.cn', 'B站 · 服务'),
+    ('pool.ntp.org', 'NTP Pool · 公共时间服务'),
+    ('telesco.pe', 'Telegram · 内容分发'),
+    ('publicsuffix.org', 'Public Suffix List · 公共后缀目录'),
+    ('browserleaks.net', 'BrowserLeaks · 浏览器检测'),
+    ('browserleaks.com', 'BrowserLeaks · 浏览器检测'),
+    ('surfshark.com', 'Surfshark · 网络检测'),
+    ('sendgrid.net', 'SendGrid · 邮件链接'),
+    ('tapnow.media', 'TapNow · 应用服务'),
+    ('zloemu.net', 'ZloEmu · 游戏服务'),
+    ('usercentrics.eu', 'Usercentrics · 隐私同意管理'),
+    ('stripe.network', 'Stripe · 支付服务'),
+    ('proxy-cheap.com', 'Proxy-Cheap · 代理服务'),
+    ('zdassets.com', 'Zendesk · 静态资源'),
+    ('orayimg.com', 'Oray 贝锐 · 静态资源'),
+    ('oray.com', 'Oray 贝锐 · 应用服务'),
+    ('onesproxy.com', 'OnesProxy · 代理服务'),
+    ('live2support.com', 'Live2Support · 网页客服'),
+    ('teo-rum.com', '腾讯 EdgeOne · 网络错误上报'),
+    ('okx.com', 'OKX · 交易平台'),
+    ('sora.com', 'Sora · AI 视频服务'),
+    ('coinbase.com', 'Coinbase · 交易平台'),
+    ('perplexity.ai', 'Perplexity · AI 搜索'),
+    ('discord.com', 'Discord · 应用服务'),
+    ('fast.com', 'Netflix Fast · 网络测速'),
+    ('tiktok.com', 'TikTok · 视频服务'),
+    ('disneyplus.com', 'Disney+ · 视频服务'),
+    ('bamgrid.com', 'Disney · 应用接口'),
+    ('recaptcha.net', 'Google reCAPTCHA · 安全验证'),
+    ('typekit.net', 'Adobe Typekit · 字体服务'),
+    ('gstatic.cn', 'Google · 静态资源'),
+    ('google.com.tw', 'Google 服务'),
+    ('freeswitch.org', 'FreeSWITCH · STUN 网络服务'),
+    ('nextcloud.com', 'Nextcloud · STUN 网络服务'),
+    ('voip.blackberry.com', 'BlackBerry · STUN 网络服务'),
+    ('ohttp-relay-safebrowsing-chrome.google.fastly-edge.com', 'Google Safe Browsing · 隐私中继'),
+    ('adnxs.com', 'Xandr · 广告服务'),
+    ('3lift.com', 'TripleLift · 广告服务'),
+    ('adsrvr.org', 'The Trade Desk · 广告服务'),
+    ('linkedin.com', 'LinkedIn · 广告统计'),
+    ('iqoo.com', 'iQOO · 账户服务'),
+    ('npmjs.org', 'npm · 软件包仓库'),
+    ('apache.org', 'Apache · 软件仓库'),
+    ('oracle.com', 'Oracle · 软件下载'),
+    ('braze-images.com', 'Braze · 图片资源'),
+    ('ocsp-certum.com', 'Certum · 证书状态检查'),
+    ('comodoca.com', 'Comodo CA · 证书状态检查'),
+    ('cdn-go.cn', '腾讯云 · CDN 资源'),
+    ('antigravity-hub-auto-updater-974169037036.us-central1.run.app', 'Google Antigravity · 更新服务'),
+    ('gitcode.com', 'GitCode · 代码托管'),
+    ('apnic.net', 'APNIC · 网络注册信息'),
+    ('gitlab.io', 'GitLab Pages · 网站托管'),
+    ('malware-filter.pages.dev', '恶意网站过滤规则 · 公共列表'),
+    ('v2ex.com', 'V2EX · 网站资源'),
+    ('metacubex.one', 'MetaCubeX · 项目文档'),
+    ('alicdn.com', '阿里云 · 静态资源'),
+    ('aliyuncs.com', '阿里云 · 应用服务'),
+    ('bcebos.com', '百度智能云 · 对象存储'),
+    ('tencent.com', '腾讯 · 网络服务'),
+    ('mat1.gtimg.com', '腾讯 · 静态资源'), ('qqmc.gtimg.com', '腾讯 · 静态资源'),
+    ('gtimg.cn', '腾讯 · 静态资源'),
+    ('qlogo.cn', 'QQ · 头像资源'),
+    ('rescdn.qqmail.com', 'QQ邮箱 · 静态资源'),
+    ('weiyun.com', '腾讯微云 · 应用服务'),
+    ('bytetos.com', '字节跳动 · 内容资源'),
+    ('bytednsdoc.com', '字节跳动 · 文档资源'),
+    ('douyinvod.com', '抖音 · 视频资源'), ('idouyinvod.com', '抖音 · 视频资源'),
+    ('volceapplog.com', '火山引擎 · 应用日志'),
+    ('volcvideo.com', '火山引擎 · 音视频服务'),
+    ('bytetcc.com', '字节跳动 · 配置服务'),
+    ('bytescm.com', '字节跳动 · 内容资源'),
+    ('byted-static.com', '字节跳动 · 静态资源'),
+    ('byteeffecttos.com', '字节跳动 · 特效资源'),
+    ('iesdouyin.com', '抖音 · 社交服务'),
+    ('applogcdn.com', '字节跳动 · 日志资源'),
+    ('huoshanstatic.com', '火山引擎 · 静态资源'),
+    ('example.com', 'IANA · 示例域名'),
+
+    # Official Battle.net download page references blzstatic.cn assets.
+    ('battlenet.com.cn', '战网国服 · 暴雪游戏服务'),
+    ('blzstatic.cn', '战网国服 · 游戏资源'),
     # 2026-10-30 official site titles + local process evidence.
     ('primevideo.com', 'Prime Video · 视频服务'),
     ('gitee.com', 'Gitee · 代码托管'),
@@ -223,8 +366,53 @@ UNVERIFIED = (
     # qjspcdn.cn 公网未注册（CNNIC whois 无记录 + NXDOMAIN，2026-10-11 核实），
     # 随机字母子域是典型的失效 SDK/探测流量特征，单列以便 tooltip 说明
     ('qjspcdn.cn', '失效域名（qjspcdn）'),
-    ('smtcdns.net', '待识别（smtcdns）'),
     ('rytesa.cn', '待识别（rytesa）'),
+)
+
+# Connection lists use concise names. Evidence and uncertainty remain in
+# tooltips and review history, and candidates stay in the review log.
+CANDIDATE_SERVICES = (
+    ('smtcdns.net', '腾讯 · CDN 调度',
+     '公开分流规则常将其列入腾讯域，但本轮缺少第一方归属说明；置信度中等'),
+    ('cdntips.net', '腾讯 · 下载分发',
+     '公开样本的下载路径嵌入 QQ 官方地址，仍需第一方资料交叉确认；置信度中等'),
+    ('tfogc.com', '腾讯 · 下载分发',
+     '公开样本出现微信官方下载路径；只能作为分发方向线索，置信度较低'),
+    ('gaming-sdk.com', 'Discord · 游戏 SDK',
+     '公开 SDK 文档出现 API v9/OAuth 端点，尚待 Discord 第一方资料确认'),
+    ('default.exp-tas.com', '微软 · 实验配置',
+     '公开主机资料和功能配置响应指向微软，本机来源为PhoneExperienceHost；最新微软Edge端点页未直接列出，置信度中等'),
+    ('officeppe.com', '微软 Office · 预发布服务',
+     '子域包含 Office 预发布环境特征，不作为正式生产服务确认'),
+    ('weixinbridge.com', '微信 · 网页桥接',
+     '名称指向微信桥接服务，缺少第一方归属资料'),
+    ('byte-test.com', '字节跳动 · 网络拨测',
+     '子域 perfops 指向性能拨测，字节归属尚未由第一方资料确认'),
+    ('vegslb.com', '火山引擎 · 负载调度',
+     '与字节系服务共同出现且名称类似 GSLB，仍需独立归属证据'),
+    ('ctcdn.com.cn', '中国电信 · CDN',
+     '域名指向电信 CDN 方向，但本轮未取得运营方第一方说明'),
+    ('pancdn.net', 'PCDN · 内容分发',
+     '仅标识可能的分发类型，不推断具体运营商或来源应用'),
+    ('fenxi.com', '友盟 · 统计分析',
+     '统计子域与域名名称提供方向线索，归属仍待第一方资料确认'),
+)
+
+# Dynamic addresses are matched only with the original process, port and
+# protocol context. They are deliberately absent from the permanent ALIASES.
+IP_CANDIDATES = (
+    {'host':'122.14.229.138','label':'豆包输入法 · 接口',
+     'proc':'imeservice.exe','path_contains':'doubaoime','port':443,'network':'udp',
+     'basis':'历史账本中同进程/UDP 443 关联 ime-igw.doubao.com，跨13天、25个连接；非永久IP归属'},
+    {'host':'101.126.56.149','label':'豆包输入法 · 接口',
+     'proc':'imeservice.exe','path_contains':'doubaoime','port':443,'network':'udp',
+     'basis':'历史账本中同进程/UDP 443 关联 ime-igw.doubao.com，跨12天、24个连接；非永久IP归属'},
+    {'host':'101.126.56.184','label':'豆包输入法 · 接口',
+     'proc':'imeservice.exe','path_contains':'doubaoime','port':443,'network':'udp',
+     'basis':'历史账本中同进程/UDP 443 关联 ime-igw.doubao.com，跨10天、32个连接；非永久IP归属'},
+    {'host':'122.14.236.20','label':'豆包输入法 · 接口',
+     'proc':'imeservice.exe','path_contains':'doubaoime','port':443,'network':'udp',
+     'basis':'历史账本中同进程/UDP 443 关联 ime-igw.doubao.com，跨7天、19个连接；非永久IP归属'},
 )
 
 # 安卓 App 品牌域（用于"引擎内 App"标注：引擎转发流量内核标不出进程，
@@ -280,10 +468,10 @@ PROC_FRIENDLY = {
     'lsass.exe': '系统安全服务', 'services.exe': '系统服务控制',
     'spoolsv.exe': '打印服务', 'wininit.exe': '系统初始化',
     'vmms.exe': 'Hyper-V 虚拟机',
-    # GPT 桌面版（原 Codex 客户端，2026-10-11 用户截图确认进程名）
+    # GPT 桌面版（原 Codex 客户端）
     'chatgpt.exe': 'ChatGPT',
-    # 2026-10-21 待鉴定日志实测进程
-    # 网易 MuMu 模拟器（路径 E:\Program Files\Netease\MuMu 核实）
+    # 常见常驻服务与桌面进程
+    # 网易 MuMu 模拟器
     'mumunxdevice.exe': 'MuMu 模拟器', 'mumunxmain.exe': 'MuMu 模拟器',
     'mumunxservice.exe': 'MuMu 模拟器服务', 'mumunxupdater.exe': 'MuMu 模拟器更新',
     'cefviewwing.exe': 'MuMu 模拟器 · 界面渲染',
@@ -366,6 +554,28 @@ def domain_matches(host, suffix):
     host, suffix = host.lower().rstrip('.'), suffix.lower().rstrip('.')
     return host == suffix or host.endswith('.' + suffix)
 
+
+def ip_candidate(row):
+    raw = str(row.get('raw_host') or row.get('host') or '').strip()
+    path = str(row.get('process_path') or '').lower().replace('/', '\\')
+    proc = ntpath.basename(str(row.get('proc') or path)).lower()
+    for candidate in IP_CANDIDATES:
+        if raw != candidate['host'] or proc != candidate['proc']:
+            continue
+        if candidate['path_contains'] not in path:
+            continue
+        try:
+            port = int(row.get('destination_port') or 0)
+        except (TypeError, ValueError):
+            continue
+        if port != candidate['port']:
+            continue
+        if str(row.get('network') or '').lower() != candidate['network']:
+            continue
+        return candidate
+    return None
+
+
 def review_anomalies(row):
     """Detect invalid/control text independently of known service aliases."""
     import unicodedata
@@ -379,10 +589,10 @@ def review_anomalies(row):
 
 
 def needs_review(row, legacy=()):
-    """目标仍未被识别 → 进入待鉴定日志（unknown-targets.json）。
+    """目标是否缺少确认名称；日志层会另行过滤普通裸 IP。
 
-    命中"待核实/失效"名单、或任何别名表都认不出的域名/裸 IP 都算。
-    已识别的正常目标返回 False，不进日志。"""
+    命中"待核实/失效"名单、候选名称、或任何别名表都认不出的目标都算。
+    候选名称继续收集证据；已识别的正常目标返回 False。"""
     if review_anomalies(row):
         return True
     raw = str(row.get('raw_host') or row.get('host') or '').strip()
@@ -391,18 +601,31 @@ def needs_review(row, legacy=()):
     for suffix, _ in UNVERIFIED:
         if domain_matches(raw, suffix):
             return True
+    for suffix, _, _ in CANDIDATE_SERVICES:
+        if domain_matches(raw, suffix):
+            return True
     if app_brand(raw):
         return False    # 引擎品牌域已能归因（应用宝 · 番茄小说 等），不算未识别
     return service_name(raw, legacy) == raw
 
+def rules_revision():
+    return (tuple(ALIASES),tuple(UNVERIFIED),tuple(CANDIDATE_SERVICES),repr(IP_CANDIDATES))
+
 def service_name(host, legacy=()):
+    return _service_name_cached(str(host or ''),tuple(legacy),tuple(ALIASES),tuple(UNVERIFIED),tuple(CANDIDATE_SERVICES))
+
+@lru_cache(maxsize=2048)
+def _service_name_cached(host, legacy, aliases, unverified, candidates):
     host = str(host or '')
-    for suffix, label in UNVERIFIED:
+    for suffix, label in unverified:
+        if domain_matches(host, suffix):
+            return label
+    for suffix, label, _ in candidates:
         if domain_matches(host, suffix):
             return label
     if domain_matches(host, 'byteimg.com') and 'novel' in host.split('.')[0].lower():
         return '阅读图片资源'
-    for suffix, label in (*ALIASES, *legacy):
+    for suffix, label in (*aliases, *legacy):
         # Old keyword-only entries were prone to false positives.
         if '.' in suffix and domain_matches(host, suffix):
             return label
@@ -430,9 +653,15 @@ def label_basis(row, legacy=()):
     if domain_matches(raw, 'qjspcdn.cn'):
         return ('该域名公网未注册（CNNIC whois 无记录 + NXDOMAIN，2026-10-11 核实）；'
                 '随机字母子域疑似失效 SDK 或探测流量，来源程序待核实')
+    for suffix, _, basis in CANDIDATE_SERVICES:
+        if domain_matches(raw, suffix):
+            return basis + '；该名称仍保留在待鉴定清单，后续轮次可改判'
     for suffix, _ in UNVERIFIED:
         if domain_matches(raw, suffix):
             return '仅缩短难读主机名；所属应用和用途待核实（' + suffix + '）'
+    candidate = ip_candidate(row)
+    if candidate:
+        return candidate['basis'] + '；仅在同进程/端口/协议上下文显示候选，仍待交叉认证'
     if domain_matches(raw, 'qznovelvod.com'):
         return '依据域名及 reading/video 字样推断资源类型，未确认具体应用'
     if connection_name(row, legacy) == '豆包输入法':
@@ -450,6 +679,9 @@ def connection_name(row, legacy=()):
     path = str(row.get('process_path') or '').replace('/', '\\')
     proc = ntpath.basename(str(row.get('proc') or path))
     parts = path.lower().split('\\')
+    candidate = ip_candidate(row)
+    if candidate:
+        return candidate['label']
     if 'doubaoime' in parts and ntpath.basename(path).lower() == 'imeservice.exe':
         return '豆包输入法'
     try:

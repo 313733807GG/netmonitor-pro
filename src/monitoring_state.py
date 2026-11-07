@@ -69,3 +69,21 @@ def latency_style(ok, milliseconds):
     milliseconds = max(0, int(milliseconds))
     color = theme.GREEN if milliseconds <= 200 else (theme.YELLOW if milliseconds <= 500 else theme.RED)
     return f"{milliseconds} ms", color
+
+
+def proxy_switch_state(data):
+    """Whether a supported client's real proxy switches allow manual quality checks."""
+    data = data if isinstance(data, dict) else {}
+    client = data.get('client_id') or {
+        'Clash Verge': 'verge', 'FlClash': 'flclash',
+    }.get(data.get('sw_name'), '')
+    label = {'verge': 'Clash Verge', 'flclash': 'FlClash'}.get(client, '代理软件')
+    if not data.get('sw_on'):
+        return False, f'未检测到{label}正在运行'
+    if client == 'flclash' and data.get('proxy_running') is not True:
+        return False, 'FlClash 代理开关未开启，手动 IP 检测不可用'
+    if not (data.get('sp_on') or data.get('tun_on')):
+        return False, f'{label} 未开启系统代理或 TUN，手动 IP 检测不可用'
+    if not data.get('takeover'):
+        return False, f'{label} 当前未实际接管网络，手动 IP 检测不可用'
+    return True, ''

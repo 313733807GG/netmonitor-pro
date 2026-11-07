@@ -1,70 +1,39 @@
-# NetMonitor Pro 22.0.2
+# NetMonitor
 
-> 22.0.2：已移除Fl质量参考，原单元格留空；仅IPPure与CleanIP参与评分和类型印证。安装及新增订阅必须按[代理商检测入口说明](docs/PROVIDER_SETUP.md)逐份检查。
-
-Windows 桌面网络监控小组件：系统/进程实时流量、Mihomo 连接分流、AI 出口节点、HTTP 延迟与 IP 质量。
-
-> **本版本已在 Clash Verge Rev / Mihomo v1.19.32 和 FlClash 0.9.2 / Mihomo v1.19.33 实机验证。其他 Mihomo 客户端可能适用但需自行适配；非 Mihomo 内核不建议下载使用。** 本项目不是 Clash Verge 官方产品，不附带代理服务、订阅或节点。
-
-[下载 v22.0.2](https://github.com/313733807GG/netmonitor-pro/releases/tag/v22.0.2) · [详细安装](docs/INSTALLATION.md) · [日常使用](docs/USAGE.md) · [后期维护](docs/MAINTENANCE.md) · [交给 AI 安装](docs/AI_INSTALL.md) · [IP 检测入口](docs/CLASH_VERGE_SETUP.md) · [更新记录](CHANGELOG.md)
-
-本版新增 Clash Verge / FlClash 适配与双站 IP 检测、CleanIP 风险命中明细、亮蓝主题和多屏吸附修复。详见[新版变化](docs/V22_CHANGES.md)与[FlClash 设置](docs/FLCLASH_SETUP.md)。
+Windows桌面网络监控工具：查看实时流量、进程与目标服务、代理分流、实际AI出口、延迟及IP质量。支持已适配的 **Clash Verge Rev** 和 **FlClash**；NetMonitor不提供代理服务或订阅。
 
 ## 界面
 
-<img src="docs/images/netmonitor-22.0.1.png" width="360" alt="NetMonitor Pro 22.0.2 桌面面板：流量、Clash Verge 状态、IP 质量、地区与连接列表">
+<img src="docs/images/netmonitor-22.0.12.png" width="360" alt="NetMonitor 22.0.12 桌面面板：实时流量、代理状态、AI 节点、IP 质量与连接列表">
 
-展示图由维护者提供，代理商名称已遮挡。节点、地区、分数和软件名称为当时示例，不是默认配置、代理推荐或可保证的检测结果。
+展示图由用户提供，节点名称已遮挡。图中“入账中”为用户自行开启后的示例；首次启动默认为“已暂停”。节点、地区、分数和软件名称为当时示例，不是默认配置、代理推荐或可保证的检测结果。
 
-## 下载运行
+## 最省事的安装方法
 
-1. 下载 Release 中的 **NetMonitor-v22.0.2-windows-x64.zip**，核对同页 `SHA256SUMS.txt`；GitHub 自动生成的 Source code 是源码，不含可运行 EXE。
-2. 完整解压到有写入权限的独立目录，保留 `NetMonitor.exe` 和整个 `_internal`，不要只复制 EXE。便携包无需另装 Python。
-3. 启动 Clash Verge Rev 或 FlClash，再启动 `NetMonitor.exe`，按 Windows 提示允许管理员权限，以启用 ETW 精准采集。普通权限下功能可能降级。
-4. 如需 IPPure/CleanIP 评分，先按[检测入口说明](docs/CLASH_VERGE_SETUP.md)合并专用配置；缺少此入口时评分不可用，普通流量监控仍可使用。
+把下面一句话交给能操作你Windows电脑的AI：
 
-已在 Windows x64、Python 3.12.10 构建环境、Clash Verge Rev 2.5.x / Mihomo v1.19.32 验证；FlClash 0.9.2 / Mihomo v1.19.33 也已实测；没有对所有 Windows 版本、其他客户端或架构作兼容保证。运行系统需能加载随包 Python/Qt 运行库。
+> 请按本仓库对应正式Release的[AI安装指南](docs/AI_INSTALL.md)，下载安装NetMonitor，完成我现有Clash Verge Rev或FlClash的必要关联配置。默认使用非系统盘、关闭NetMonitor自启动、首次关闭历史流量入账；不要询问是否开启这两项。保留我的订阅、分流规则和个人数据，结束后告诉我实际完成了什么。
 
-**EXE 未做发布者代码签名**，Windows 智能应用控制可能阻止 EXE 或依赖 DLL。哈希校验不等于代码签名。请保留系统安全保护，遇到拦截按[使用说明](docs/USAGE.md)排查；不要反复重新打包或关闭保护来碰运气。
+仓库：[313733807GG/netmonitor-pro](https://github.com/313733807GG/netmonitor-pro)。下载入口：[正式Release](https://github.com/313733807GG/netmonitor-pro/releases/latest)。以该Release的`release-manifest.json`和校验文件为准，不下载第三方改包。
 
-## 主要功能
+程序包完整解压即可使用，不需要安装Python、Node或浏览器自动化组件。需要正常Windows管理员授权才能启用ETW精准采集。
 
-- 系统网卡与 ETW 进程流量，覆盖 TCP、UDP/QUIC；代理分流/系统连接视图，连接悬停取证、点击固定列表、吸附迷你条。
-- 显示系统代理、TUN、严格路由、规则/全局/直连模式；无法取得可信状态时显示未知。
-- 识别 AI 实际出口，规则模式优先 ChatGPT/OpenAI，其次 Claude/Gemini；全局模式使用 GLOBAL 叶子节点。多出口场景只展示选定的 AI 出口。
-- IPPure 系数、CleanIP 纯净度/等级、风险分、风险标记、IP 类型和地区；每次启动按“订阅标识 + 节点名”缓存，手动“IP质量”可刷新。
-- “探测周期”和“测AI延迟”测量节点访问 ChatGPT 测试地址的 HTTP 耗时，独立于 IP 质量缓存；不代表 ICMP 延迟或完整 AI 服务可用性。
-- 原流量账本与待鉴定目标保存在本机，域名/其他名称、裸 IP、乱码异常分别保留配额。
+## 默认体验
 
-## 需要自行维护的内容
+- 首次安装选可写的非系统固定盘，通常为`D:\Apps\NetMonitor`；没有合适磁盘时由AI说明并协助选择。
+- NetMonitor自启动关闭，不创建定时任务。
+- 首次历史流量入账关闭；实时监控和已有名称识别继续工作。
+- 不后台启动Edge，不批量测速节点，不替换你的普通代理选择。
+- 用户需要历史记录时再自行开启入账；升级保留已明确选择的入账状态。
 
-**未知名称不会自动在线鉴定或自动更新别名库。** `src/connection_labels.py` 是本地静态识别库；进程名、父进程和域名只是归属线索，不保证所有连接都能识别，也不能仅凭随机域名/动态 IP 判断应用或安全性。待鉴定日志需使用者定期审阅、核实归属并更新源码/重新构建；详见[维护流程](docs/USAGE.md#未知名称维护)。
+## 文档
 
-检测网站是独立第三方服务，可能限流、要求人机验证、改接口或停止服务；评分、类型和地理库会有差异，不能当作账号风控保证。软件不绕过验证，不因接口失败伪造评分。动态出口变化但节点名未变时，缓存需手动刷新。
+- [AI自动安装](docs/AI_INSTALL.md)：下载、校验、配置、验收及交付。
+- [安装、升级与卸载](docs/INSTALLATION.md)。
+- [两款代理软件的必要配置](docs/PROXY_SETUP.md)。
+- [界面、连接名称与账本](docs/USAGE.md)。
+- [后续维护和故障排查](docs/MAINTENANCE.md)。
 
-日志、流量账本、导出文件可能含域名、IP、程序路径和节点名；**不要原样上传到公开 Issue 或交给在线 AI**。仓库和便携包不包含维护者的日志、账本、订阅、密钥或个人代理脚本。
+IP评分依赖外部站点与当前线路；限流、验证和未就绪会明确提示。IPPure轻量接口未覆盖的地址不显示伪造分数，IPv6无系数不等于0%风险。未知进程/服务并不自动意味着恶意，工具也不保证识别所有目标。
 
-## 从源码运行与构建
-
-使用 Windows x64、受信任的独立 Python 3.12，创建自己的虚拟环境：
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -I tools/project_cli.py check
-.\.venv\Scripts\python.exe -I tools/project_cli.py test
-.\.venv\Scripts\python.exe -I tools/project_cli.py run
-```
-
-构建另装 `requirements-build.txt`，执行：
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
-.\.venv\Scripts\python.exe -I tools/project_cli.py build
-```
-
-输出 `dist/NetMonitor`，构建不自动安装或重启程序。源码版与 EXE 不要同时采集同一个 ETW 会话。当前 183 项回归测试；GitHub Actions 在 Windows 上运行。`src/etw` 随附 pywintrace 0.3.0 源码，**不要安装 PyPI 上同名的 `etw` 包**。
-
-## 许可
-
-项目自有源码为 [MIT](LICENSE)。pywintrace、Python、Qt/PySide6 等保留各自许可，见 [第三方说明](THIRD_PARTY_NOTICES.md) 与 `THIRD_PARTY_LICENSES/`；MIT 不覆盖第三方组件。
+实际兼容版本、许可证和签名状态见对应Release说明。未经该Release实测的客户端版本，不应仅因“使用Mihomo”就宣称完全兼容。
