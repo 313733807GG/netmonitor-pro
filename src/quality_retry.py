@@ -13,6 +13,8 @@ class QualityRetry:
     def completed(self,key,result,now=None):
         if result.get('cancelled'):return
         errors=list((result.get('errors') or {}).values())+list((result.get('discovery') or {}).get('errors',{}).values())
+        if any('CleanIP API' in str(e) and any(x in str(e) for x in ('401','403','429','额度','权限')) for e in errors):
+            self.reset(key);return
         def transient(text):
             s=str(text).lower()
             if any(x in s for x in ('403','429','401','验证','captcha','结构','ip不符')):return False

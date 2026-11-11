@@ -383,6 +383,7 @@ def quality_feedback(result):
         elif result.get('reused'):lines.append('已补查缺项，其余复用成功结果')
         else:lines.append('数值相同也已重新查询；检测时间已更新')
     if (result.get('discovery') or {}).get('errors'):lines.append('部分协议地址暂未取得，不判定为单IP节点')
+    if result.get('cleanip',{}).get('coverage_note'):lines.append('CleanIP：已取得 API 摘要，网页完整细项未提供')
     return '\n'.join(lines)
 
 

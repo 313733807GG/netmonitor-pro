@@ -17,6 +17,12 @@ def report(ip='1.1.1.1',score=75):
 def pure(ip='1.1.1.1'):
     return 'IP\n'+ip+'\nASN\nAS1\n位置\nMaxMind\nJapan, Tokyo, Shinjuku\nIP来源\n原生IP\nIP属性\n住宅IP\nIPPure系数\n85% 极度风险'
 
+def authorized_client(request):
+    """Exercise the collector with deterministic API results, never real keys."""
+    client=Mock()
+    client.query.side_effect=lambda ip:parse_cleanip_page(request(None,'cleanip.io','/'+ip)[0],ip)
+    return patch.object(a,'CleanIPClient',return_value=client)
+
 class AddressTests(unittest.TestCase):
     def test_public_family_validation(self):
         for ip in ('127.0.0.1','192.168.1.1','::1','ff02::1'):
@@ -52,19 +58,19 @@ class AddressTests(unittest.TestCase):
         return p,request,browser,calls,state
     def test_automatic_discovers_both_and_queries_both_sites_by_ip(self):
         p,request,browser,calls,state=self.setup_case()
-        with patch.object(a.q,'proxy_get',side_effect=request):r=a.collect_quality(p,'N')
+        with patch.object(a.q,'proxy_get',side_effect=request),authorized_client(request):r=a.collect_quality(p,'N')
         self.assertEqual(len({(x['source'],x['data']['ip']) for x in r['observations']}),3);self.assertEqual(r['ippure']['ip'],'1.1.1.1')
         self.assertEqual(r['cleanip']['ip'],'2606:4700::1111');self.assertEqual(r['cleanip']['score'],50)
         self.assertEqual(state['now'],'REJECT');self.assertIn('ippure',r['errors']);self.assertIn('2606:4700::1111',r['errors']['ippure'])
     def test_manual_family_selects_address_not_transport(self):
         p,request,browser,calls,state=self.setup_case()
-        with patch.object(a.q,'proxy_get',side_effect=request):r=a.collect_quality(p,'N',family=6)
+        with patch.object(a.q,'proxy_get',side_effect=request),authorized_client(request):r=a.collect_quality(p,'N',family=6)
         self.assertNotIn('ippure',r);self.assertIn('轻量接口未取得',r['errors']['ippure'])
         self.assertNotIn(('cleanip.io','/1.1.1.1'),calls);self.assertEqual(len(r['observations']),2)
         self.assertEqual(r['cleanip']['ip'],'2606:4700::1111')
     def test_ipv6_timeout_does_not_assert_ipv4_only(self):
         p,request,browser,calls,state=self.setup_case(True)
-        with patch.object(a.q,'proxy_get',side_effect=request):r=a.collect_quality(p,'N')
+        with patch.object(a.q,'proxy_get',side_effect=request),authorized_client(request):r=a.collect_quality(p,'N')
         self.assertIn('6',r['discovery']['errors']);self.assertNotIn('ipv4_only',r)
         self.assertEqual(r['observed_ips'],['1.1.1.1']);self.assertEqual(state['now'],'REJECT')
     def test_missing_requested_family_does_not_query_other_address(self):
@@ -76,9 +82,9 @@ class AddressTests(unittest.TestCase):
         def get(pipe,host,path,*args,**kw):
             if host=='my.ippure.com':raise OSError('HTTP 403')
             return request(pipe,host,path,*args,**kw)
-        with patch.object(a.q,'proxy_get',side_effect=get):r=a.collect_quality(p,'N')
+        with patch.object(a.q,'proxy_get',side_effect=get),authorized_client(get):r=a.collect_quality(p,'N')
         self.assertIn('cleanip',r);self.assertNotIn('ippure',r);self.assertIn('ippure',r['errors']);self.assertEqual(state['now'],'REJECT')
     def test_cancel_mid_query_releases_selector(self):
         p,request,browser,calls,state=self.setup_case();owner=Mock();owner.isInterruptionRequested.side_effect=[False,False,False,True]
-        with patch.object(a.q,'proxy_get',side_effect=request):r=a.collect_quality(p,'N',owner)
+        with patch.object(a.q,'proxy_get',side_effect=request),authorized_client(request):r=a.collect_quality(p,'N',owner)
         self.assertTrue(r['cancelled']);self.assertEqual(state['now'],'REJECT')

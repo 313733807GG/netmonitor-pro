@@ -9,7 +9,7 @@ from ip_quality import decode_response,quality_feedback
 class QueryCacheTests(unittest.TestCase):
     def first(self):
         p,request,browser,calls,state=fixtures.AddressTests().setup_case()
-        with patch.object(a.q,'proxy_get',side_effect=request):r=a.collect_quality(p,'N')
+        with patch.object(a.q,'proxy_get',side_effect=request),fixtures.authorized_client(request):r=a.collect_quality(p,'N')
         # Model an earlier successful IPv6 public-interface observation.
         r['observations'].append({'source':'ippure','data':{'ip':'2606:4700::1111','score':None,'residential':True}})
         e=QualityEvidence();e.record(('p','N'),r)
@@ -25,13 +25,13 @@ class QueryCacheTests(unittest.TestCase):
         p,request,browser,calls,state,r,e=self.first();cache=e.query_snapshot(('p','N'))
         cache['records']=[x for x in cache['records'] if not (x['source']=='cleanip' and ':' in x['data']['ip'])]
         calls.clear();browser.reset_mock()
-        with patch.object(a.q,'proxy_get',side_effect=request):
+        with patch.object(a.q,'proxy_get',side_effect=request),fixtures.authorized_client(request):
             v=a.collect_quality(p,'N',cache=cache)
         self.assertEqual(calls,[('cleanip.io','/2606:4700::1111')])
         self.assertEqual(len(v['reused']),3);self.assertEqual(v['queried'],[['cleanip','2606:4700::1111']])
     def test_left_refresh_rechecks_selected_family(self):
         p,request,browser,calls,state,r,e=self.first();calls.clear();browser.reset_mock()
-        with patch.object(a.q,'proxy_get',side_effect=request):
+        with patch.object(a.q,'proxy_get',side_effect=request),fixtures.authorized_client(request):
             v=a.collect_quality(p,'N',family=4,cache=e.query_snapshot(('p','N')),force=True)
         self.assertEqual(v['reused'],[]);self.assertEqual(len(v['queried']),2)
         self.assertIn(('my.ippure.com','/v1/info'),calls);self.assertNotIn(('cleanip.io','/2606:4700::1111'),calls)

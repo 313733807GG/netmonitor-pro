@@ -4,7 +4,7 @@ Windows桌面网络监控工具：查看实时流量、进程与目标服务、�
 
 ## 界面
 
-<img src="docs/images/netmonitor-22.0.12.png" width="360" alt="NetMonitor 22.0.12 桌面面板：实时流量、代理状态、AI 节点、IP 质量与连接列表">
+<img src="docs/images/netmonitor-22.0.13.png" width="360" alt="NetMonitor 22.0.13 桌面面板：实时流量、代理状态、AI 节点、IP 质量与连接列表">
 
 展示图由用户提供，节点名称已遮挡。图中“入账中”为用户自行开启后的示例；首次启动默认为“已暂停”。节点、地区、分数和软件名称为当时示例，不是默认配置、代理推荐或可保证的检测结果。
 
@@ -35,5 +35,13 @@ Windows桌面网络监控工具：查看实时流量、进程与目标服务、�
 - [后续维护和故障排查](docs/MAINTENANCE.md)。
 
 IP评分依赖外部站点与当前线路；限流、验证和未就绪会明确提示。IPPure轻量接口未覆盖的地址不显示伪造分数，IPv6无系数不等于0%风险。未知进程/服务并不自动意味着恶意，工具也不保证识别所有目标。
+
+### CleanIP需要自行配置API密钥
+
+**因CleanIP网页改版，本版本的CleanIP质量查询改用授权MCP API，不再回退旧网页查询。** 请访问[CleanIP官网](https://cleanip.io/)，按当前页面指引领取或创建自己的API密钥。未配置时会显示配置提示，无法取得CleanIP结果；IPPure、流量监控和其他功能不受影响。
+
+在**源码ZIP**根目录使用Python 3.12运行`py -3.12 -I tools/configure_cleanip.py`，通过隐藏输入配置密钥。凭据仅以当前Windows用户的DPAPI加密保存，不进入源码、程序ZIP或GitHub仓库；不要把密钥粘贴到命令行参数、Issue或聊天中。普通EXE运行不需要Python，只有配置或更换密钥的助手需要Python 3.12。配置后重启NetMonitor或手动刷新IP质量。
+
+API摘要没有独立风险分和网页全部24项核验状态，界面明确显示“未提供”，不把缺失项当作通过。具体步骤见[使用说明](docs/USAGE.md#6-ip质量能做什么不能做什么)。
 
 实际兼容版本、许可证和签名状态见对应Release说明。未经该Release实测的客户端版本，不应仅因“使用Mihomo”就宣称完全兼容。

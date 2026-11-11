@@ -1,7 +1,9 @@
 """Discover verified node exits, then query each explicitly by address."""
 import time,copy
+import cleanip_credentials
+from cleanip_mcp import Client as CleanIPClient
 import ip_quality as q
-from lookup_parsers import public_ip,parse_cleanip_page
+from lookup_parsers import public_ip
 
 def collect_quality(pipe,node,owner=None,family=None,cache=None,force=False):
     cache=cache or {};prior=copy.deepcopy(cache.get('discovery') or {'ips':{},'errors':{}})
@@ -28,7 +30,7 @@ def collect_quality(pipe,node,owner=None,family=None,cache=None,force=False):
     def finish():
         for site,values in records.items():
             if values:
-                key=(lambda x:x['score'] if x.get('score') is not None else -1) if site=='ippure' else (lambda x:(100-x['score'],x['risk']))
+                key=(lambda x:x['score'] if x.get('score') is not None else -1) if site=='ippure' else (lambda x:(100-x['score'],x.get('risk') if x.get('risk') is not None else -1))
                 result[site]=max(values,key=key)
             if failures[site]:result['errors'][site]='；'.join(failures[site])[:500]
         pure=result.get('ippure') or {};clean=result.get('cleanip') or {}
@@ -55,16 +57,16 @@ def collect_quality(pipe,node,owner=None,family=None,cache=None,force=False):
                 raw,_=q.proxy_get(pipe,f'ipv{version}.icanhazip.com','/',q.PROBE_PORT,node,owner,max_bytes=128)
                 result['discovery']['ips'][v]=public_ip(raw.decode('ascii'),version)
             except Exception as exc:result['discovery']['errors'][v]=str(exc)[:180]
-        # If both echo services are unavailable, reuse the established public
-        # site APIs as bounded alternative evidence. Never guess the family.
+        # If both echo services are unavailable, IPPure may still establish
+        # the actual exit. CleanIP requires an authorized per-IP API query;
+        # never revive its redesigned legacy web interface for discovery.
         if not result['discovery']['ips']:
-            for site,host,path,parser in (('ippure','my.ippure.com','/v1/info',q.parse_ippure),('cleanip','cleanip.io','/cli',q.parse_cleanip)):
+            for site,host,path,parser in (('ippure','my.ippure.com','/v1/info',q.parse_ippure),):
                 check()
                 try:
                     raw,_=q.proxy_get(pipe,host,path,q.PROBE_PORT,node,owner)
                     item=parser(raw);ip=public_ip(item['ip']);v=str(q.ipaddress.ip_address(ip).version)
                     item['query_method']='公开出口接口（IP已核实）'
-                    if site=='cleanip':item['details_error']='待获取网页风险明细'
                     fresh[(site,ip)]=item;result['observations'].append({'source':site,'data':item})
                     result['discovery']['ips'][v]=ip;result['discovery']['errors'].pop(v,None)
                 except Exception:pass
@@ -87,15 +89,25 @@ def collect_quality(pipe,node,owner=None,family=None,cache=None,force=False):
                 result['discovery']['errors'].pop(str(version),None)
                 if (not family or version==family) and ip not in selected:selected.append(ip)
             except Exception as exc:pure_api_error=str(exc)[:160]
+        api_key='';credential_error=''
+        if any(not cached('cleanip',ip) for ip in selected):
+            try:api_key=cleanip_credentials.load_key()
+            except ValueError as exc:credential_error=str(exc)
+        api=CleanIPClient(pipe,node,api_key,owner) if api_key else None
+        api_block=''
         for ip in selected:
             check();item=cached('cleanip',ip)
             if item:add('cleanip',ip,item,True);continue
-            result['queried'].append(['cleanip',ip])
             try:
-                raw,_=q.proxy_get(pipe,'cleanip.io','/'+ip,q.PROBE_PORT,node,owner,max_bytes=2*1024*1024)
-                data=parse_cleanip_page(raw,ip);add('cleanip',ip,data)
+                if credential_error:raise ValueError(credential_error)
+                if not api:raise ValueError('未配置 CleanIP API 密钥；网页已改版，请运行 tools/configure_cleanip.py 自行配置')
+                if api_block:raise ValueError(api_block)
+                result['queried'].append(['cleanip',ip])
+                data=api.query(ip)
+                add('cleanip',ip,data)
                 if data.get('details_error'):result['errors']['cleanip_details']=data['details_error']
             except Exception as exc:
+                if api and any(x in str(exc) for x in ('401','403','429','额度','权限')):api_block=str(exc)[:140]
                 failures['cleanip'].append(ip+'：'+str(exc)[:140])
                 if ('cleanip',ip) in fresh:add('cleanip',ip,fresh[('cleanip',ip)])
         check();pending=[]

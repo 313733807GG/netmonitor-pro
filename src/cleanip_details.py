@@ -86,6 +86,11 @@ def risk_display(clean):
     if not report:
         if extra:summary='汇总：'+'、'.join(dict.fromkeys(x['flags'] for x in extra))
         return summary,tooltip+'\n明细未取得，当前仅为汇总。'
+    if report.get('scope')=='api_summary':
+        tooltip+='\n来源：CleanIP 官方授权 API 摘要\n'+clean.get('coverage_note','不代表网页全部风险细项已核验。')
+        tooltip+='\n'+'\n'.join(x['detail'] for x in report.get('items',[]))
+        tooltip+='\n数据时间：'+report.get('data_as_of','未提供')+'\n报告：'+report.get('url','')
+        return summary,tooltip
     hits=report.get('hits',[])
     marked=[x['label'] for x in report.get('items',[]) if x.get('status') in ('hit','conflict')]
     chosen='、'.join(dict.fromkeys(marked)) or '未检出'

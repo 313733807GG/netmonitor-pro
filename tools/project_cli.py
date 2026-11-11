@@ -13,7 +13,12 @@ def main():
     if command == 'test':
         import unittest
         tests = unittest.defaultTestLoader.discover(str(ROOT / 'tests'))
-        return 0 if unittest.TextTestRunner(verbosity=1).run(tests).wasSuccessful() else 1
+        from unittest.mock import patch
+        # Offline tests use a dummy configured key and never read real credentials.
+        # Missing-key and DPAPI tests override this patch explicitly.
+        with patch('cleanip_credentials.load_key', return_value='unit-test-cleanip-key'):
+            result = unittest.TextTestRunner(verbosity=1).run(tests)
+        return 0 if result.wasSuccessful() else 1
     if command == 'check':
         import ssl, PySide6, psutil, etw, win32api
         print('Python:', sys.version.split()[0], 'SSL:', ssl.OPENSSL_VERSION)

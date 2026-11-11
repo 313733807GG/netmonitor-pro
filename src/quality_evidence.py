@@ -46,7 +46,7 @@ class QualityEvidence:
                 items=[r['data'] for r in records if r['source']==s]
                 if items:
                     if s=='ippure':chosen=max(items,key=lambda v:v.get('score') if v.get('score') is not None else -1)
-                    else:chosen=max(items,key=lambda v:(100-v['score'],v['risk']))
+                    else:chosen=max(items,key=lambda v:(100-v['score'],v.get('risk') if v.get('risk') is not None else -1))
                     out[s]=copy.deepcopy(chosen)
             out['summary_mode']=True
         pure=out.get('ippure') or {};clean=out.get('cleanip') or {}
@@ -75,7 +75,7 @@ def risk_clean(result):
     items=(result or {}).get('node_risk_items')
     if items:
         clean['risk_details']={'hits':[i['label'] for i in items if i['status']=='hit'],
-          'items':items,'url':'同节点本次运行已检测出口汇总；各IP见下方依据','data_as_of':'各次检测时间可能不同'}
+          'items':items,'scope':('api_summary' if clean.get('coverage_note') else 'web'),'url':'同节点本次运行已检测出口汇总；各IP见下方依据','data_as_of':'各次检测时间可能不同'}
     return clean
 
 def type_inputs(result):

@@ -3354,7 +3354,10 @@ class NetMonitorWidget(QWidget):
             _lbl_set(self.lbl_cleanip,
                 f'CleanIP：<span style="color:{clean_color(clean["score"])};font-weight:700">{clean["score"]:g} {html.escape(clean["grade"])}</span>'
                 f' /100 <small>{family_label(clean)}</small>')
-            _lbl_set(self.lbl_cleanrisk,f'风险：<span style="color:{risk_color(clean["risk"])}">{clean["risk"]:g}</span> /100')
+            if clean.get('risk') is None:
+                _lbl_set(self.lbl_cleanrisk,'风险：未提供')
+            else:
+                _lbl_set(self.lbl_cleanrisk,f'风险：<span style="color:{risk_color(clean["risk"])}">{clean["risk"]:g}</span> /100')
         else:
             _lbl_set(self.lbl_cleanip, 'CleanIP：暂不可用')
         # A cached score is visibly old if this website failed on the latest attempt.
@@ -3375,6 +3378,11 @@ class NetMonitorWidget(QWidget):
         tip += '本次启动按订阅/节点缓存；切回不会自动重测。手动点击可更新。\nIPPure/风险分越低越好；CleanIP 纯净度越高越好。第三方评分仅供参考。'
         if pure: tip += '\nIPPure 出口 IP：'+pure['ip']
         if clean: tip += '\nCleanIP 出口 IP：'+clean['ip']+'\n完整标记：'+clean['flags']
+        if clean and clean.get('coverage_note'):
+            tip+='\n'+clean['query_method']+'\n'+clean['coverage_note']+'\n'+clean_detail
+            from cleanip_mcp import evidence_text
+            evidence=evidence_text(clean)
+            if evidence:tip+='\n'+evidence
         if result.get('ip_mismatch'):tip += '\n两站为同节点不同出口；评分各自展示，类型与地区按节点汇总。'
         if d.get('other_ai_exits'):tip += '\n存在其他 AI 出口，此处优先跟随 ChatGPT 实际路径。'
         if result.get('ippure_retry'):tip += '\nIPPure IPv4补测：'+str(result['ippure_retry'])
